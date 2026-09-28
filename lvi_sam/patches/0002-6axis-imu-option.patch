@@ -1,0 +1,30 @@
+diff --git a/src/lidar_odometry/utility.h b/src/lidar_odometry/utility.h
+index a93c983..0102ffd 100644
+--- a/src/lidar_odometry/utility.h
++++ b/src/lidar_odometry/utility.h
+@@ -109,6 +109,7 @@ public:
+     float imuGyrBiasN;
+     float imuGravity;
+     float imuRPYWeight;
++    bool imuHasOrientation;
+    
+ 
+ #if IF_OFFICIAL
+@@ -225,6 +226,8 @@ public:
+         nh.param<float>(PROJECT_NAME + "/imuGyrBiasN", imuGyrBiasN, 0.00003);
+         nh.param<float>(PROJECT_NAME + "/imuGravity", imuGravity, 9.80511);
+         nh.param<float>(PROJECT_NAME + "/imuRPYWeight", imuRPYWeight, 0.01);
++        // drone-slam-docker: 姿勢を出力しない 6 軸 IMU 用 (false なら orientation を単位クォータニオンとして扱う)
++        nh.param<bool>(PROJECT_NAME + "/imuHasOrientation", imuHasOrientation, true);
+ 
+     #if IF_OFFICIAL
+         nh.param<vector<double>>(PROJECT_NAME+ "/extrinsicRot", extRotV, vector<double>());
+@@ -354,6 +357,8 @@ public:
+         imu_out.angular_velocity.z = gyr.z();
+         // rotate roll pitch yaw
+         Eigen::Quaterniond q_from(imu_in.orientation.w, imu_in.orientation.x, imu_in.orientation.y, imu_in.orientation.z);  
++        if (!imuHasOrientation)
++            q_from = Eigen::Quaterniond::Identity();
+     #if IF_OFFICIAL
+         Eigen::Quaterniond q_final = q_from * extQRPY;
+     #else

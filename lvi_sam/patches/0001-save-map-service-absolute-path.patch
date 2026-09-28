@@ -1,0 +1,25 @@
+diff --git a/src/lidar_odometry/mapOptmization.cpp b/src/lidar_odometry/mapOptmization.cpp
+index 8c274de..47c0239 100644
+--- a/src/lidar_odometry/mapOptmization.cpp
++++ b/src/lidar_odometry/mapOptmization.cpp
+@@ -174,6 +174,8 @@ public:
+         pubCloudRegisteredRaw = nh.advertise<sensor_msgs::PointCloud2>(PROJECT_NAME + "/lidar/mapping/cloud_registered_raw", 1);
+ 
+         pubSLAMInfo = nh.advertise<lvi_sam::cloud_info>(PROJECT_NAME + "/lidar/mapping/slam_info", 1);
++        // drone-slam-docker: 地図保存サービスを公開 (上流では宣言のみで advertise されていない)
++        srvSaveMap = nh.advertiseService(PROJECT_NAME + "/save_map", &mapOptimization::saveMapService, this);
+ 
+         downSizeFilterCorner.setLeafSize(mappingCornerLeafSize, mappingCornerLeafSize, mappingCornerLeafSize);
+         downSizeFilterSurf.setLeafSize(mappingSurfLeafSize, mappingSurfLeafSize, mappingSurfLeafSize);
+@@ -339,9 +341,9 @@ public:
+         cout << "****************************************************" << endl;
+         cout << "Saving map to pcd files ..." << endl;
+         if (req.destination.empty())
+-            saveMapDirectory = std::getenv("HOME") + savePCDDirectory;
++            saveMapDirectory = savePCDDirectory;  // drone-slam-docker: 絶対パスとして扱う
+         else
+-            saveMapDirectory = std::getenv("HOME") + req.destination;
++            saveMapDirectory = req.destination;  // drone-slam-docker: 絶対パスとして扱う
+         cout << "Save destination: " << saveMapDirectory << endl;
+         // create directory and remove old files;
+         int unused = system((std::string("exec rm -r ") + saveMapDirectory).c_str());

@@ -1,0 +1,13 @@
+<launch>
+  <!-- FAST-LIO2 (Livox CustomMsg 入力) : パラメータは gen_config.py が calib.yaml から生成した yaml -->
+  <arg name="config" default="/tmp/drone_slam_work/fast_lio.yaml" />
+  <arg name="rviz" default="false" />
+
+  <rosparam command="load" file="$(arg config)" />
+  <node pkg="fast_lio" type="fastlio_mapping" name="laserMapping" output="screen" required="true"
+        launch-prefix="stdbuf -oL -eL" />
+
+  <group if="$(arg rviz)">
+    <node pkg="rviz" type="rviz" name="rviz" args="-d $(find fast_lio)/rviz_cfg/loam_livox.rviz" />
+  </group>
+</launch>

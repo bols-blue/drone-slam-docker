@@ -1,0 +1,64 @@
+# ============================================================================
+# 共通センサ設定 (全SLAMイメージ共通)
+#   /config/calib.yaml としてマウントすると、各イメージの起動時に
+#   各手法固有の設定ファイル (yaml) がこの内容から自動生成される。
+#   値はテンプレート (仮値) なので、必ず実機キャリブレーション結果に置き換えること。
+# ============================================================================
+
+topics:
+  lidar: /livox/lidar        # livox_ros_driver/CustomMsg (tools イメージで ROS2 bag から変換済みのもの)
+  imu: /livox/imu            # Mid-360S 内蔵IMU ICM40609 (sensor_msgs/Imu, 加速度の単位は g)
+  image: /image_raw          # sensor_msgs/Image (bgr8 / rgb8 / mono8)
+  fc_imu: /mavros/imu/data   # FC の姿勢付き IMU (LVI-SAM のみ使用。9軸IMUが必須のため)
+
+lidar:
+  model: mid360s             # Livox Mid-360S (データ形式は Mid-360 と同じ livox_ros_driver2 CustomMsg, 4ライン)
+  scan_lines: 4              # Mid-360/360S は 4 (Avia は 6)
+  blind: 0.5                 # [m] (Mid-360S の最小測距は 0.1m。機体やプロペラが写る距離に合わせる) これより近い点は除外 (機体・プロペラ除去)
+  det_range: 100.0           # [m]
+
+imu:
+  # Mid-360S 内蔵IMUの加速度は g 単位。true なら各手法側で 9.81 倍して扱う設定にする
+  acc_in_g: true
+  acc_noise: 0.1
+  gyr_noise: 0.1
+  acc_bias_noise: 0.0001
+  gyr_bias_noise: 0.0001
+
+# LiDAR 点を IMU 座標系へ写す変換: p_imu = R * p_lidar + t
+# Mid-360S は内蔵IMUとLiDARが剛体結合。下記は Mid-360 の Livox 公式値 (FAST-LIO mid360.yaml と同じ)。
+# Mid-360S で同一かは Livox のユーザーマニュアルで要確認 (数cmの差なので地図への影響は小さい)。
+T_imu_lidar:
+  R: [1, 0, 0,
+      0, 1, 0,
+      0, 0, 1]
+  t: [-0.011, -0.02329, 0.04412]
+
+camera:
+  width: 1280
+  height: 720
+  fx: 900.0
+  fy: 900.0
+  cx: 640.0
+  cy: 360.0
+  # OpenCV plumb_bob: [k1, k2, p1, p2, k3]
+  distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+  fps: 30
+  # カメラ時刻 = LiDAR時刻 + time_offset [s] (未知なら 0。R3LIVE/FAST-LIVO2 は一部オンライン推定)
+  time_offset: 0.0
+
+# LiDAR 点をカメラ座標系へ写す変換: p_cam = R * p_lidar + t
+# (direct_visual_lidar_calibration の T_lidar_camera はこの逆行列なので注意。
+#  逆行列の形で持っている場合は T_lidar_cam: を代わりに書けば自動で反転する)
+T_cam_lidar:
+  # 仮値: カメラが LiDAR の前方(+X)を向き、光軸 z_cam = x_lidar と仮定した回転
+  R: [0, -1,  0,
+      0,  0, -1,
+      1,  0,  0]
+  t: [0.0, 0.0, 0.0]
+
+# (LVI-SAM のみ) FC の IMU (/mavros/imu/data) と LiDAR の外部パラメータ: p_fcimu = R * p_lidar + t
+# 機体への取り付け図面または LiDAR-IMU キャリブレーションで求めること。未設定なら T_imu_lidar で代用 (警告)
+# T_fcimu_lidar:
+#   R: [1, 0, 0, 0, 1, 0, 0, 0, 1]
+#   t: [0.0, 0.0, 0.0]

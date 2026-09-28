@@ -1,0 +1,156 @@
+#!/usr/bin/env bash
+# =============================================================================
+# slam-replay: ROS1 bag をリプレイしながら SLAM を実行し、3D マップを /output に保存する共通ランナー
+#
+# 各イメージは /opt/drone_slam/profile.sh で以下を定義する:
+#   ALGO                 : 手法名 (出力ディレクトリ名に使う)
+#   RECORD_TOPICS        : SLAM 出力として rosbag record するトピック (空なら録らない)
+#   algo_prepare         : 設定ファイル生成など ($WORK に書く)
+#   algo_launch          : SLAM 本体を起動する (最後は `exec roslaunch ...` とし、SIGINT が SLAM に届くようにする)
+#   algo_finish          : bag 再生終了後の地図保存処理 (既定: roslaunch に SIGINT を送って終了待ち)
+#   algo_collect         : 出力物を $OUT にコピー
+#   algo_postprocess     : (任意) 追加の後処理
+# =============================================================================
+set -eo pipefail
+
+usage() {
+  cat <<USAGE
+Usage: slam-replay --bag <file.bag> [options]
+
+  --bag PATH        ROS1 bag (必須)。ROS2 bag (mcap/db3) は先に tools イメージで変換すること
+  --calib PATH      共通キャリブレーション (既定: /config/calib.yaml, 無ければ同梱テンプレート)
+  --out DIR         出力先 (既定: /output)。<DIR>/<ALGO>_<日時>/ に保存
+  --rate R          再生速度 (既定: 1.0。処理が追いつかない場合は 0.5 等に下げる)
+  --start SEC       bag の開始オフセット秒
+  --duration SEC    再生する秒数
+  --tail SEC        再生終了後に処理完了を待つ秒数 (既定: 15)
+  --rviz            RViz を表示 (DISPLAY と X11 ソケットのマウントが必要)
+  --no-record       SLAM 出力トピックの rosbag record を行わない
+  -h, --help        このヘルプ
+USAGE
+}
+
+BAG="" CALIB="/config/calib.yaml" OUT_ROOT="/output" RATE="1.0" START="" DURATION="" TAIL="15"
+export USE_RVIZ=false
+RECORD=true
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --bag) BAG="$2"; shift 2 ;;
+    --calib) CALIB="$2"; shift 2 ;;
+    --out) OUT_ROOT="$2"; shift 2 ;;
+    --rate) RATE="$2"; shift 2 ;;
+    --start) START="$2"; shift 2 ;;
+    --duration) DURATION="$2"; shift 2 ;;
+    --tail) TAIL="$2"; shift 2 ;;
+    --rviz) USE_RVIZ=true; shift ;;
+    --no-record) RECORD=false; shift ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown option: $1" >&2; usage; exit 1 ;;
+  esac
+done
+
+# バックグラウンドジョブが SIGINT を無視しないようにジョブ制御を有効化
+# (roslaunch 等は SIGINT を受けて地図を保存してから終了する)
+set -m
+
+[[ -n "$BAG" ]] || { usage; exit 1; }
+[[ -f "$BAG" ]] || { echo "[slam-replay] bag が見つかりません: $BAG" >&2; exit 1; }
+if [[ "$BAG" != *.bag ]]; then
+  echo "[slam-replay] ROS1 bag (.bag) を指定してください。ROS2 bag は tools イメージの ros2bag-to-ros1 で変換できます" >&2
+  exit 1
+fi
+if [[ ! -f "$CALIB" ]]; then
+  echo "[slam-replay] WARNING: $CALIB が無いので同梱テンプレート(仮値)を使います。結果の色付けは正しくなりません" >&2
+  CALIB=/opt/drone_slam/config/calib.yaml
+fi
+
+# shellcheck disable=SC1091
+source /opt/ros/${ROS_DISTRO}/setup.bash
+# shellcheck disable=SC1091
+[[ -f /opt/drone_slam/ws/devel/setup.bash ]] && source /opt/drone_slam/ws/devel/setup.bash
+# shellcheck disable=SC1091
+[[ -f /opt/drone_slam/ws/install/setup.bash ]] && source /opt/drone_slam/ws/install/setup.bash
+
+algo_finish() { stop_launch 600; }  # roslaunch は --sigint-timeout=600 付きで起動すること
+algo_collect() { :; }
+algo_postprocess() { :; }
+RECORD_TOPICS=""
+export CALIB BAG
+export WORK=/tmp/drone_slam_work
+# shellcheck disable=SC1091
+source /opt/drone_slam/profile.sh
+export OUT="${OUT_ROOT}/${ALGO}_$(date +%Y%m%d_%H%M%S)"
+mkdir -p "$WORK" "$OUT"
+export ROS_LOG_DIR="$OUT/ros_log"
+LOG="$OUT/slam.log"
+
+PIDS=()
+cleanup() {
+  for p in "${PIDS[@]}"; do kill -INT "$p" 2>/dev/null || true; done
+  sleep 1
+  pkill -INT -f rosmaster 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# SLAM プロセスを SIGINT で止め、最大 $1 秒待つ (多くの手法は SIGINT 時に地図を保存する)
+stop_launch() {
+  local timeout="${1:-120}"
+  [[ -n "$LAUNCH_PID" ]] || return 0
+  echo "[slam-replay] SLAM に SIGINT を送信して地図保存を待ちます (最大 ${timeout}s)"
+  kill -INT "$LAUNCH_PID" 2>/dev/null || true
+  for ((i = 0; i < timeout; i++)); do
+    kill -0 "$LAUNCH_PID" 2>/dev/null || { LAUNCH_PID=""; return 0; }
+    sleep 1
+  done
+  echo "[slam-replay] WARNING: タイムアウトのため強制終了します" >&2
+  kill -TERM "$LAUNCH_PID" 2>/dev/null || true
+  LAUNCH_PID=""
+}
+export -f stop_launch
+
+echo "[slam-replay] ALGO=$ALGO BAG=$BAG CALIB=$CALIB OUT=$OUT RATE=$RATE"
+cp "$CALIB" "$OUT/calib.yaml"
+rosbag info "$BAG" > "$OUT/bag_info.txt" 2>&1 || true
+
+roscore > "$OUT/roscore.log" 2>&1 &
+PIDS+=($!)
+for _ in $(seq 1 30); do rosparam list >/dev/null 2>&1 && break; sleep 1; done
+rosparam set use_sim_time true
+
+algo_prepare
+cp -r "$WORK" "$OUT/generated_config" 2>/dev/null || true
+
+echo "[slam-replay] SLAM 起動"
+( algo_launch ) > >(tee "$LOG") 2>&1 &
+LAUNCH_PID=$!
+PIDS+=($LAUNCH_PID)
+sleep "${LAUNCH_WAIT:-5}"
+
+REC_PID=""
+if $RECORD && [[ -n "$RECORD_TOPICS" ]]; then
+  # shellcheck disable=SC2086
+  rosbag record -O "$OUT/slam_output.bag" $RECORD_TOPICS __name:=slam_output_recorder > "$OUT/record.log" 2>&1 &
+  REC_PID=$!
+  sleep 2
+fi
+
+PLAY_ARGS=(--clock -r "$RATE" -q)
+[[ -n "$START" ]] && PLAY_ARGS+=(-s "$START")
+[[ -n "$DURATION" ]] && PLAY_ARGS+=(-u "$DURATION")
+echo "[slam-replay] rosbag play ${PLAY_ARGS[*]} $BAG"
+rosbag play "${PLAY_ARGS[@]}" "$BAG" ${PLAY_EXTRA_ARGS:-}
+echo "[slam-replay] 再生終了。${TAIL}s 処理完了を待機"
+sleep "$TAIL"
+
+if [[ -n "$REC_PID" ]]; then
+  rosnode kill /slam_output_recorder >/dev/null 2>&1 || kill -INT "$REC_PID" || true
+  wait "$REC_PID" 2>/dev/null || true
+fi
+
+algo_finish
+algo_collect
+algo_postprocess
+# 出力の所有者をマウント元 (/output) の所有者に合わせる (コンテナは root で動くため)
+chown -R "$(stat -c %u:%g "$OUT_ROOT")" "$OUT" 2>/dev/null || true
+echo "[slam-replay] 完了: $OUT"
+ls -la "$OUT"

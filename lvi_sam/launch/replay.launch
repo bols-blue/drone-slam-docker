@@ -1,0 +1,24 @@
+<launch>
+  <!-- drone-slam-docker: rosbag リプレイ用 LVI-SAM 起動ファイル (生成済み設定を引数で受け取る) -->
+  <arg name="params_lidar"/>
+  <arg name="params_camera"/>
+  <arg name="lidar_topic" default="/livox/lidar"/>
+  <arg name="points_topic" default="/livox/points"/>
+  <arg name="blind" default="0.5"/>
+  <arg name="num_lines" default="4"/>
+  <arg name="rviz" default="false"/>
+
+  <rosparam file="$(arg params_lidar)" command="load"/>
+  <param name="vins_config_file" type="string" value="$(arg params_camera)"/>
+
+  <!-- Mid-360S CustomMsg -> ring/time 付き PointCloud2 -->
+  <node pkg="drone_slam_utils" type="livox_to_pointcloud2" name="livox_to_pointcloud2" output="screen">
+    <param name="input_topic" value="$(arg lidar_topic)"/>
+    <param name="output_topic" value="$(arg points_topic)"/>
+    <param name="blind" value="$(arg blind)"/>
+    <param name="num_lines" value="$(arg num_lines)"/>
+  </node>
+
+  <include file="$(find lvi_sam)/launch/include/module_sam.launch"/>
+  <include if="$(arg rviz)" file="$(find lvi_sam)/launch/include/module_rviz.launch"/>
+</launch>

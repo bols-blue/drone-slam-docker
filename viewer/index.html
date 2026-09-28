@@ -1,0 +1,520 @@
+<title>SLAM Map Bench</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap">
+<style>
+:root {
+  --paper: #eef1f0;
+  --panel: #ffffff;
+  --ink: #1a2326;
+  --muted: #5d6b6e;
+  --line: #d3dad8;
+  --accent: #c8541f;
+  --accent-soft: #f6e3d9;
+  --good: #2f7d4f;
+  --warn: #a06b00;
+  --view-bg: #0d1316;
+  --view-ink: #d8e1df;
+  --sans: "Zen Kaku Gothic New", "Hiragino Sans", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --paper: #12181b;
+    --panel: #192125;
+    --ink: #e3e9e7;
+    --muted: #93a2a4;
+    --line: #2c373b;
+    --accent: #ee7a43;
+    --accent-soft: #3a2519;
+    --good: #5dbb82;
+    --warn: #e0ac3c;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --paper: #12181b;
+  --panel: #192125;
+  --ink: #e3e9e7;
+  --muted: #93a2a4;
+  --line: #2c373b;
+  --accent: #ee7a43;
+  --accent-soft: #3a2519;
+  --good: #5dbb82;
+  --warn: #e0ac3c;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--sans);
+  font-size: 15px;
+  line-height: 1.6;
+  padding-inline: 20px;
+  padding-block: 20px 48px;
+}
+.wrap { max-width: 1320px; margin: 0 auto; display: grid; gap: 20px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 24px; }
+h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: .01em; text-wrap: balance; }
+h1 small { font-family: var(--mono); font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 10px; letter-spacing: 0; }
+.dataset { color: var(--muted); font-size: 13px; }
+.dataset b { color: var(--ink); font-weight: 500; }
+
+.stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
+@media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
+
+.viewport {
+  position: relative;
+  background: var(--view-bg);
+  border-radius: 6px;
+  overflow: hidden;
+  aspect-ratio: 16 / 10;
+  max-width: 100%;
+  min-height: 320px;
+}
+.viewport canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.vlabel {
+  position: absolute; top: 10px; font-family: var(--mono); font-size: 12px; color: var(--view-ink);
+  background: rgba(13, 19, 22, .72); padding: 3px 8px; border-radius: 3px; pointer-events: none;
+}
+.vlabel.a { left: 10px; }
+.vlabel.b { left: calc(50% + 10px); }
+.divider { position: absolute; top: 0; bottom: 0; left: 50%; width: 1px; background: #3a474c; pointer-events: none; }
+.scalebar {
+  position: absolute; left: 12px; bottom: 12px; font-family: var(--mono); font-size: 11px; color: var(--view-ink);
+  display: grid; gap: 3px; pointer-events: none;
+}
+.scalebar i { display: block; height: 4px; border: 1px solid var(--view-ink); border-top: 0; }
+.status {
+  position: absolute; inset: 0; display: grid; place-items: center; color: var(--view-ink);
+  font-family: var(--mono); font-size: 13px; pointer-events: none;
+}
+.hint { position: absolute; right: 12px; bottom: 10px; font-size: 11px; color: #7f8e91; pointer-events: none; }
+
+.side { display: grid; gap: 14px; }
+.box { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 14px; display: grid; gap: 10px; }
+.box h2 { font-size: 12px; font-weight: 500; letter-spacing: .08em; color: var(--muted); margin: 0; }
+
+.runs { display: grid; gap: 6px; }
+.run {
+  display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: baseline;
+  padding: 9px 10px; border: 1px solid var(--line); border-radius: 5px; background: transparent;
+  color: inherit; font: inherit; text-align: left; cursor: pointer;
+}
+.run:hover { border-color: var(--muted); }
+.run:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.run[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.run .nm { font-weight: 700; }
+.run .tag { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.run .meta { grid-column: 1 / -1; font-family: var(--mono); font-size: 11.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.slot { font-family: var(--mono); font-size: 11px; font-weight: 600; color: var(--accent); }
+
+.ctrl { display: grid; gap: 10px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.row label.cap { font-size: 13px; color: var(--muted); min-width: 72px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 5px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 13px; padding: 4px 10px; border: 0; background: transparent; color: var(--ink); cursor: pointer;
+}
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+input[type="range"] { accent-color: var(--accent); width: 140px; }
+.chk { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
+.chk input { accent-color: var(--accent); }
+
+.stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
+.stat { display: grid; gap: 0; }
+.stat span { font-size: 11.5px; color: var(--muted); }
+.stat b { font-family: var(--mono); font-weight: 600; font-size: 16px; font-variant-numeric: tabular-nums; }
+.note { font-size: 13px; color: var(--muted); margin: 0; }
+
+.table-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; }
+table { border-collapse: collapse; width: 100%; min-width: 760px; font-size: 13.5px; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-size: 12px; font-weight: 500; color: var(--muted); letter-spacing: .04em; }
+td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+th.num { text-align: right; }
+tr:last-child td { border-bottom: 0; }
+.pill { display: inline-block; font-size: 11.5px; padding: 1px 8px; border-radius: 99px; border: 1px solid currentColor; white-space: nowrap; }
+.pill.good { color: var(--good); }
+.pill.warn { color: var(--warn); }
+.pill.plain { color: var(--muted); }
+
+.foot { display: grid; gap: 8px; max-width: 72ch; }
+.foot h2 { font-size: 16px; margin: 0; }
+.foot p, .foot li { font-size: 14px; margin: 0; }
+.foot ul { margin: 0; padding-left: 1.2em; display: grid; gap: 4px; }
+code { font-family: var(--mono); font-size: 12.5px; background: var(--accent-soft); padding: 1px 5px; border-radius: 3px; }
+pre { font-family: var(--mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; margin: 0; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>SLAM Map Bench<small>drone-slam-docker</small></h1>
+    <div class="dataset" id="dataset">データ読み込み中…</div>
+  </header>
+
+  <section class="stage">
+    <div class="viewport" id="viewport">
+      <canvas id="gl"></canvas>
+      <div class="vlabel a" id="labelA"></div>
+      <div class="vlabel b" id="labelB" hidden></div>
+      <div class="divider" id="divider" hidden></div>
+      <div class="scalebar" id="scalebar"><i id="scaleline" style="width:80px"></i><span id="scaletext">10 m</span></div>
+      <div class="status" id="status">点群を読み込み中…</div>
+      <div class="hint">ドラッグ: 回転 / 右ドラッグ: 移動 / ホイール: ズーム</div>
+    </div>
+
+    <aside class="side">
+      <div class="box">
+        <h2>手法</h2>
+        <div class="runs" id="runs"></div>
+        <p class="note" id="slotNote">クリックで表示を切り替えます。</p>
+      </div>
+      <div class="box ctrl">
+        <h2>表示</h2>
+        <div class="row"><label class="cap">モード</label>
+          <div class="seg" id="modeSeg">
+            <button type="button" id="modeSingle" aria-pressed="true">単独</button>
+            <button type="button" id="modeCompare" aria-pressed="false">2手法を並べる</button>
+          </div>
+        </div>
+        <div class="row"><label class="cap">色</label>
+          <div class="seg" id="colorSeg">
+            <button type="button" id="colRgb" aria-pressed="true">カメラ色</button>
+            <button type="button" id="colHeight" aria-pressed="false">高さ</button>
+          </div>
+        </div>
+        <div class="row"><label class="cap">視点</label>
+          <div class="seg">
+            <button type="button" id="viewTop">真上</button>
+            <button type="button" id="viewOblique">斜め</button>
+            <button type="button" id="viewStart">始点付近</button>
+          </div>
+        </div>
+        <div class="row"><label class="cap" for="ptSize">点サイズ</label>
+          <input type="range" id="ptSize" min="1" max="6" step="0.5" value="2">
+        </div>
+        <div class="row"><label class="cap" for="zClip">高さ上限</label>
+          <input type="range" id="zClip" min="0" max="100" step="1" value="100">
+          <span class="tag" id="zClipText" style="font-family:var(--mono);font-size:12px">全て</span>
+        </div>
+        <div class="row">
+          <label class="chk"><input type="checkbox" id="showTraj" checked> 軌跡を表示</label>
+        </div>
+      </div>
+      <div class="box">
+        <h2 id="statTitle">統計</h2>
+        <div class="stats" id="stats"></div>
+        <p class="note" id="runNote"></p>
+      </div>
+    </aside>
+  </section>
+
+  <div class="table-wrap">
+    <table>
+      <thead><tr>
+        <th>手法</th><th>系統</th><th class="num">地図点数 (出力)</th><th class="num">色付き率</th>
+        <th class="num">軌跡長</th><th class="num">処理時間幅</th><th class="num">始点-終点差</th><th>出力</th>
+      </tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <section class="foot">
+    <h2>この結果について</h2>
+    <ul id="footList">
+      <li>各手法の Docker イメージで、同じ rosbag を 1.0 倍速でリプレイして作った地図です。キャリブレーションはデータセット作者の公開値を共通形式 (<code>calib.yaml</code>) にしたものを全手法に渡しています。</li>
+      <li>表示用に 15 cm ボクセルで間引き、1 手法あたり最大 45 万点にしています。表の地図点数は間引き前の出力点数です。</li>
+      <li>「始点-終点差」は歩いて出発点に戻ったデータなので、ドリフトの目安になります (小さいほど良い)。</li>
+    </ul>
+    <h2>自分のデータで作り直す</h2>
+    <pre>./run.sh all ~/drone_slam_bags/texture_YYYYMMDD_hhmmss --calib ./my_calib.yaml
+python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図.pcd:軌跡.txt ...</pre>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.147.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  "use strict";
+  const $ = (id) => document.getElementById(id);
+  const fmtInt = (n) => n.toLocaleString("ja-JP");
+  const FAMILY = {
+    "fast-livo2": "① LIV 密結合", "r3live": "① LIV 密結合", "sr-livo": "① LIV 密結合", "lvi-sam": "① LIV 因子グラフ",
+    "fast-lio2-openmvs": "② LIO + 後処理", "fast-lio2-openmvs-mesh": "② LIO + 後処理"
+  };
+
+  const canvas = $("gl");
+  const viewport = $("viewport");
+  let renderer;
+  try {
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  } catch (e) {
+    $("status").textContent = "WebGL を使えないため 3D 表示できません。";
+    return;
+  }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.setClearColor(0x0d1316, 1);
+  renderer.setScissorTest(true);
+
+  const camera = new THREE.PerspectiveCamera(55, 1.6, 0.1, 5000);
+  camera.up.set(0, 0, 1);
+  const controls = new THREE.OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.12;
+  controls.screenSpacePanning = true;
+
+  const state = { runs: [], meta: null, a: 0, b: 1, compare: false, color: "rgb", size: 2, traj: true, zclip: 1 };
+  const scenes = {};
+  let globalZ = [0, 1];
+
+  function heightColors(pos, count, zmin, zmax) {
+    const out = new Uint8Array(count * 3);
+    const stops = [[32, 62, 120], [30, 150, 160], [120, 200, 90], [240, 200, 60], [230, 90, 40]];
+    for (let i = 0; i < count; i++) {
+      let t = (pos[i * 3 + 2] - zmin) / Math.max(zmax - zmin, 1e-6);
+      t = Math.min(Math.max(t, 0), 1) * (stops.length - 1);
+      const k = Math.min(Math.floor(t), stops.length - 2), f = t - k;
+      for (let c = 0; c < 3; c++) out[i * 3 + c] = stops[k][c] + (stops[k + 1][c] - stops[k][c]) * f;
+    }
+    return out;
+  }
+
+  async function loadRun(run) {
+    const buf = await (await fetch("data/" + run.file)).arrayBuffer();
+    const n = run.count;
+    const q = new Int16Array(buf, 0, n * 3);
+    const rgb = new Uint8Array(buf, n * 6, n * 3);
+    const pos = new Float32Array(n * 3);
+    for (let i = 0; i < n * 3; i++) pos[i] = q[i] * run.scale;
+    // 全手法で同じ座標系に揃えるため center を戻す (各地図は各手法の初期姿勢基準)
+    const zs = pos.filter((_, i) => i % 3 === 2);
+    const sorted = Float32Array.from(zs).sort();
+    const zlo = sorted[Math.floor(sorted.length * 0.01)], zhi = sorted[Math.floor(sorted.length * 0.99)];
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const colRgb = new THREE.BufferAttribute(rgb.slice(), 3, true);
+    geo.setAttribute("color", colRgb);
+    const mat = new THREE.PointsMaterial({ size: state.size, sizeAttenuation: false, vertexColors: true });
+    const pts = new THREE.Points(geo, mat);
+    const scene = new THREE.Scene();
+    scene.add(pts);
+    let line = null;
+    const tp = run.trajectory && run.trajectory.points;
+    if (tp && tp.length > 1) {
+      const lg = new THREE.BufferGeometry();
+      lg.setAttribute("position", new THREE.Float32BufferAttribute(tp.flat(), 3));
+      line = new THREE.Line(lg, new THREE.LineBasicMaterial({ color: 0xff7a3d }));
+      scene.add(line);
+      const start = new THREE.Mesh(new THREE.SphereGeometry(0.6, 16, 12), new THREE.MeshBasicMaterial({ color: 0xffffff }));
+      start.position.set(tp[0][0], tp[0][1], tp[0][2]);
+      scene.add(start);
+      line.userData.marker = start;
+    }
+    geo.computeBoundingBox();
+    scenes[run.id] = { scene, pts, line, pos, colRgb, colHeight: null, zlo, zhi, box: geo.boundingBox, run };
+  }
+
+  function applyColor(s) {
+    if (state.color === "height" || !s.run.colored_ratio) {
+      if (!s.colHeight) s.colHeight = new THREE.BufferAttribute(heightColors(s.pos, s.run.count, s.zlo, s.zhi), 3, true);
+      s.pts.geometry.setAttribute("color", s.colHeight);
+    } else {
+      s.pts.geometry.setAttribute("color", s.colRgb);
+    }
+    s.pts.material.size = state.size;
+    s.pts.material.needsUpdate = true;
+    if (s.line) { s.line.visible = state.traj; s.line.userData.marker.visible = state.traj; }
+    // 高さ上限クリップ (drawRange ではなくシェーダ無しで済ませるため clippingPlanes を使う)
+    const zc = s.zlo + (s.zhi - s.zlo) * 1.15 * state.zclip;
+    s.pts.material.clippingPlanes = state.zclip < 1 ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), zc)] : [];
+  }
+
+  function refreshAll() {
+    renderer.localClippingEnabled = state.zclip < 1;
+    Object.values(scenes).forEach(applyColor);
+    render();
+  }
+
+  function frame(kind) {
+    const s = scenes[state.runs[state.a].id];
+    if (!s) return;
+    const box = s.box.clone();
+    const c = new THREE.Vector3(); box.getCenter(c);
+    const size = new THREE.Vector3(); box.getSize(size);
+    // 外れ値で極端に広い地図のために、軌跡の範囲を優先して注視範囲を決める
+    const tp = s.run.trajectory && s.run.trajectory.points;
+    let r = Math.max(size.x, size.y) * 0.5;
+    if (tp && tp.length > 1) {
+      const tb = new THREE.Box3().setFromPoints(tp.map((p) => new THREE.Vector3(p[0], p[1], p[2])));
+      tb.getCenter(c);
+      const ts = new THREE.Vector3(); tb.getSize(ts);
+      r = Math.min(r, Math.max(ts.x, ts.y) * 0.5 + 25);
+    }
+    if (kind === "start" && tp) {
+      const p = tp[0];
+      controls.target.set(p[0], p[1], p[2]);
+      camera.position.set(p[0] - 18, p[1] - 18, p[2] + 12);
+    } else if (kind === "top") {
+      controls.target.copy(c);
+      camera.position.set(c.x, c.y - 0.001, c.z + r * 2.0);
+    } else {
+      controls.target.copy(c);
+      camera.position.set(c.x - r * 0.9, c.y - r * 1.2, c.z + r * 0.9);
+    }
+    camera.far = Math.max(5000, r * 20);
+    camera.updateProjectionMatrix();
+    controls.update();
+    render();
+  }
+
+  function resize() {
+    const w = viewport.clientWidth, h = viewport.clientHeight;
+    renderer.setSize(w, h, false);
+    render();
+  }
+
+  function updateScalebar(width, height) {
+    const dist = camera.position.distanceTo(controls.target);
+    const mPerPx = (2 * dist * Math.tan((camera.fov * Math.PI) / 360)) / height;
+    const target = mPerPx * 90;
+    const pow = Math.pow(10, Math.floor(Math.log10(target)));
+    const nice = [1, 2, 5, 10].map((k) => k * pow).find((v) => v >= target) || target;
+    $("scaleline").style.width = Math.round(nice / mPerPx) + "px";
+    $("scaletext").textContent = nice >= 1 ? nice + " m" : nice * 100 + " cm";
+  }
+
+  let pending = false;
+  function render() {
+    if (pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      const w = viewport.clientWidth, h = viewport.clientHeight;
+      const ids = state.compare ? [state.a, state.b] : [state.a];
+      const vw = w / ids.length;
+      camera.aspect = vw / h;
+      camera.updateProjectionMatrix();
+      ids.forEach((idx, k) => {
+        const s = scenes[state.runs[idx].id];
+        renderer.setViewport(k * vw, 0, vw, h);
+        renderer.setScissor(k * vw, 0, vw, h);
+        if (s) renderer.render(s.scene, camera); else renderer.clear();
+      });
+      updateScalebar(vw, h);
+    });
+  }
+
+  controls.addEventListener("change", render);
+  (function loop() { controls.update(); requestAnimationFrame(loop); })();
+
+  function statCard(label, value) { return `<div class="stat"><span>${label}</span><b>${value}</b></div>`; }
+  function trajCells(t) {
+    if (!t || !t.poses) return ["—", "—", "—"];
+    return [t.length_m.toFixed(1) + " m", t.duration_s.toFixed(0) + " s", t.end_to_start_m.toFixed(2) + " m"];
+  }
+  function driftPill(t) {
+    if (!t || !t.poses) return '<span class="pill plain">軌跡なし</span>';
+    const d = t.end_to_start_m;
+    return d < 0.5 ? `<span class="pill good">${d.toFixed(2)} m</span>` : `<span class="pill warn">${d.toFixed(2)} m</span>`;
+  }
+
+  function renderPanel() {
+    const html = state.runs.map((r, i) => {
+      const slot = state.compare ? (i === state.a ? "A" : i === state.b ? "B" : "") : "";
+      const pressed = i === state.a || (state.compare && i === state.b);
+      const t = r.trajectory || {};
+      return `<button type="button" class="run" aria-pressed="${pressed}" data-i="${i}">
+        <span class="nm">${r.name}</span><span class="slot">${slot}</span>
+        <span class="meta">${fmtInt(r.count_full)} 点 · ${r.colored_ratio ? Math.round(r.colored_ratio * 100) + "% 色付き" : "色なし"}${t.length_m ? " · " + t.length_m.toFixed(0) + " m" : ""}</span>
+      </button>`;
+    }).join("");
+    $("runs").innerHTML = html;
+    $("slotNote").textContent = state.compare ? "クリックで A を選び、Shift+クリック (スマホは長押し) で B を選びます。" : "クリックで表示を切り替えます。";
+    const r = state.runs[state.a];
+    const t = r.trajectory || {};
+    const [len, dur, gap] = trajCells(t);
+    $("statTitle").textContent = "統計 · " + r.name;
+    $("stats").innerHTML = statCard("出力点数", fmtInt(r.count_full)) + statCard("表示点数", fmtInt(r.count)) +
+      statCard("軌跡長", len) + statCard("始点-終点差", gap) +
+      statCard("地図の広さ (x×y)", r.extent_m[0].toFixed(0) + "×" + r.extent_m[1].toFixed(0) + " m") +
+      statCard("色付き率", r.colored_ratio ? (r.colored_ratio * 100).toFixed(0) + "%" : "色なし");
+    $("runNote").textContent = r.note || "";
+    $("labelA").textContent = (state.compare ? "A · " : "") + r.name;
+    $("labelB").hidden = !state.compare;
+    $("divider").hidden = !state.compare;
+    if (state.compare) $("labelB").textContent = "B · " + state.runs[state.b].name;
+    document.querySelectorAll("#runs .run").forEach((el) => {
+      const i = +el.dataset.i;
+      let timer = null;
+      el.addEventListener("click", (ev) => {
+        if (state.compare && ev.shiftKey) state.b = i; else state.a = i;
+        if (state.compare && state.a === state.b) state.b = (state.a + 1) % state.runs.length;
+        renderPanel(); render();
+      });
+      el.addEventListener("touchstart", () => {
+        timer = setTimeout(() => { if (state.compare) { state.b = i; if (state.a === i) state.a = (i + 1) % state.runs.length; renderPanel(); render(); } }, 550);
+      }, { passive: true });
+      el.addEventListener("touchend", () => clearTimeout(timer));
+    });
+  }
+
+  function renderTable() {
+    $("tbody").innerHTML = state.runs.map((r) => {
+      const [len, dur] = trajCells(r.trajectory);
+      return `<tr><td><b>${r.name}</b></td><td>${FAMILY[r.id] || ""}</td>
+        <td class="num">${fmtInt(r.count_full)}</td>
+        <td class="num">${r.colored_ratio ? (r.colored_ratio * 100).toFixed(0) + "%" : "—"}</td>
+        <td class="num">${len}</td><td class="num">${dur}</td><td class="num">${driftPill(r.trajectory)}</td>
+        <td>${r.outputs || ""}</td></tr>`;
+    }).join("");
+  }
+
+  function setPressed(groupIds, activeId) { groupIds.forEach((id) => $(id).setAttribute("aria-pressed", String(id === activeId))); }
+
+  $("modeSingle").onclick = () => { state.compare = false; setPressed(["modeSingle", "modeCompare"], "modeSingle"); renderPanel(); render(); };
+  $("modeCompare").onclick = () => {
+    if (state.runs.length < 2) return;
+    state.compare = true; if (state.b === state.a) state.b = (state.a + 1) % state.runs.length;
+    setPressed(["modeSingle", "modeCompare"], "modeCompare"); renderPanel(); render();
+  };
+  $("colRgb").onclick = () => { state.color = "rgb"; setPressed(["colRgb", "colHeight"], "colRgb"); refreshAll(); };
+  $("colHeight").onclick = () => { state.color = "height"; setPressed(["colRgb", "colHeight"], "colHeight"); refreshAll(); };
+  $("viewTop").onclick = () => frame("top");
+  $("viewOblique").onclick = () => frame("oblique");
+  $("viewStart").onclick = () => frame("start");
+  $("ptSize").oninput = (e) => { state.size = +e.target.value; refreshAll(); };
+  $("zClip").oninput = (e) => {
+    state.zclip = +e.target.value / 100;
+    $("zClipText").textContent = state.zclip >= 1 ? "全て" : Math.round(state.zclip * 100) + "%";
+    refreshAll();
+  };
+  $("showTraj").onchange = (e) => { state.traj = e.target.checked; refreshAll(); };
+  window.addEventListener("resize", resize);
+
+  (async function init() {
+    try {
+      const meta = await (await fetch("data/manifest.json")).json();
+      state.meta = meta;
+      state.runs = meta.runs;
+      $("dataset").innerHTML = meta.dataset || "";
+      renderPanel(); renderTable(); resize();
+      for (let i = 0; i < state.runs.length; i++) {
+        $("status").textContent = `点群を読み込み中… (${i + 1}/${state.runs.length}) ${state.runs[i].name}`;
+        await loadRun(state.runs[i]);
+        applyColor(scenes[state.runs[i].id]);
+        if (i === 0) frame("oblique");
+        render();
+      }
+      $("status").hidden = true;
+    } catch (e) {
+      $("status").textContent = "データを読み込めませんでした: " + e.message;
+    }
+  })();
+})();
+</script>

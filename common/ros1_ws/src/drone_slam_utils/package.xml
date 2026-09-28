@@ -1,0 +1,12 @@
+<?xml version="1.0"?>
+<package format="2">
+  <name>drone_slam_utils</name>
+  <version>0.1.0</version>
+  <description>Helper nodes for drone SLAM rosbag replay (Livox Mid-360)</description>
+  <maintainer email="noreply@example.com">drone-slam-docker</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>catkin</buildtool_depend>
+  <depend>roscpp</depend>
+  <depend>sensor_msgs</depend>
+  <depend>livox_ros_driver</depend>
+</package>

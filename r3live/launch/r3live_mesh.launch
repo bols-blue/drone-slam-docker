@@ -1,0 +1,27 @@
+<launch>
+    <!-- drone-slam-docker: R3LIVE オフラインユーティリティ (メッシュ再構築 + テクスチャ) を非対話で実行 -->
+    <arg name="working_dir" />
+    <arg name="offline_map_name" default="test.r3live" />
+    <arg name="add_keyframe_R" default="10.0" />
+    <arg name="add_keyframe_t" default="0.15" />
+    <arg name="decimate_mesh" default="1" />
+    <arg name="smooth_mesh_factor" default="5" />
+    <arg name="texturing_smooth_factor" default="10" />
+
+    <param name="add_keyframe_R" value="$(arg add_keyframe_R)" />
+    <param name="add_keyframe_t" value="$(arg add_keyframe_t)" />
+    <param name="insert_pt_dis" value="0.0" />
+    <param name="if_use_free_space_support" value="false" />
+    <param name="thickness_factor" value="1.0" />
+    <param name="quality_factor" value="0.0" />
+    <param name="decimate_mesh" value="$(arg decimate_mesh)" />
+    <param name="if_remove_spurious" value="40.0" />
+    <param name="if_remove_spikes" value="true" />
+    <param name="close_holes_dist" value="20" />
+    <param name="smooth_mesh_factor" value="$(arg smooth_mesh_factor)" />
+    <param name="working_dir" value="$(arg working_dir)" />
+    <param name="texturing_smooth_factor" value="$(arg texturing_smooth_factor)" />
+    <param name="offline_map_name" value="$(arg offline_map_name)" />
+
+    <node pkg="r3live" type="r3live_meshing" name="r3live_meshing" output="screen" required="true" />
+</launch>

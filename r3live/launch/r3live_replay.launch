@@ -1,0 +1,23 @@
+<launch>
+    <!-- drone-slam-docker: bag リプレイ用 R3LIVE 起動ファイル (rviz は任意) -->
+    <arg name="config" />
+    <arg name="lidar_topic" default="/livox/lidar" />
+    <arg name="imu_topic" default="/livox/imu" />
+    <arg name="image_topic" default="/image_raw" />
+    <arg name="rviz" default="false" />
+
+    <param name="LiDAR_pointcloud_topic" type="string" value="/laser_cloud_flat" />
+    <param name="IMU_topic" type="string" value="$(arg imu_topic)" />
+    <param name="Image_topic" type="string" value="$(arg image_topic)" />
+    <rosparam command="load" file="$(arg config)" />
+
+    <node pkg="r3live" type="r3live_LiDAR_front_end" name="r3live_LiDAR_front_end" output="screen" required="true">
+        <remap from="/livox/lidar" to="$(arg lidar_topic)" />
+    </node>
+    <node pkg="r3live" type="r3live_mapping" name="r3live_mapping" output="screen" required="true" />
+
+    <group if="$(arg rviz)">
+        <node name="rvizvisualisation" pkg="rviz" type="rviz" output="log"
+              args="-d $(find r3live)/../config/rviz/r3live_rviz_config.rviz" />
+    </group>
+</launch>
