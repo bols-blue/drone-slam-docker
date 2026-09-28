@@ -145,7 +145,9 @@ def main():
         n_full = len(xyz)
         colored = 0.0 if rgb is None else float((rgb.astype(int).sum(1) > 0).mean())
         xyz, rgb = voxel_downsample(xyz, rgb, args.voxel, args.cap)
-        center = np.round(np.median(xyz, 0), 2)
+        traj = read_traj(traj_path)
+        # 手法間で並べて比較しやすいよう、原点は軌跡の始点 (無ければ点群の中央値) にする
+        center = np.round(traj[0, 1:4] if traj is not None else np.median(xyz, 0), 3)
         rel = xyz - center
         scale = float(max(np.abs(rel).max() / 32000.0, 0.001))
         q = np.round(rel / scale).astype("<i2")
@@ -154,7 +156,6 @@ def main():
         with open(out / f"{rid}.bin", "wb") as f:
             f.write(q.tobytes())
             f.write(np.ascontiguousarray(rgb).tobytes())
-        traj = read_traj(traj_path)
         tinfo = {}
         if traj is not None and len(traj) > 1:
             step = max(1, len(traj) // 1500)

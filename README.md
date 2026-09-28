@@ -58,7 +58,21 @@ docker run --rm -v ~/bags:/data:ro -v $PWD/my_calib.yaml:/config/calib.yaml:ro -
 ### 3. 結果を見る
 
 - 点群・メッシュは CloudCompare や MeshLab で開けます
-- [`viewer/`](viewer/) はブラウザで複数手法の地図を並べて比較するビューアです。`viewer/export_viewer_data.py` で出力を軽量データに変換し、`viewer/` を静的サーバで配信します (`python3 -m http.server -d viewer`)
+- [`viewer/`](viewer/) はブラウザで複数手法の地図 (点群・メッシュ・軌跡) を並べて比較するビューアです
+
+```bash
+# 点群 + 軌跡 (numpy のみ。tools イメージで動く)
+docker run --rm -u $(id -u) -v $PWD:/w -w /w --entrypoint python ghcr.io/bols-blue/drone-slam:tools \
+  viewer/export_viewer_data.py --out viewer/data \
+  --run fast-livo2:FAST-LIVO2:output/fast_livo2_xxx/map_rgb.pcd:output/fast_livo2_xxx/trajectory_tum.txt \
+  --run r3live:R3LIVE:output/r3live_xxx/map/rgb_pt.pcd:output/r3live_xxx/trajectory_imu_tum.txt
+# メッシュ (open3d が必要。fast-lio2-openmvs イメージで動く)
+docker run --rm -u $(id -u) -v $PWD:/w -w /w --entrypoint python3 ghcr.io/bols-blue/drone-slam:fast-lio2-openmvs \
+  viewer/export_mesh.py --data viewer/data --id r3live --mesh output/r3live_xxx/textured_mesh.ply
+python3 -m http.server -d viewer 8000   # http://localhost:8000
+```
+
+  メッシュのテクスチャは頂点色に焼き込み、表示用に約 22 万面へ間引いています。細部は元の OBJ / PLY を MeshLab 等で確認してください
 
 ## 記録側で必要なトピック
 

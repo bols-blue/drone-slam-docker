@@ -4,6 +4,9 @@ on:
   push:
     branches: [main]
     tags: ["v*"]
+    paths-ignore:
+      - "viewer/**"
+      - "**/*.md"
   workflow_dispatch:
     inputs:
       targets:

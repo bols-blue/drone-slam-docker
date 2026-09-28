@@ -1,3 +1,4 @@
+<meta charset="utf-8">
 <title>SLAM Map Bench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -119,6 +120,7 @@ h1 small { font-family: var(--mono); font-size: 13px; font-weight: 400; color: v
 }
 .seg button + button { border-left: 1px solid var(--line); }
 .seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
+.seg button:disabled { color: var(--muted); cursor: not-allowed; }
 .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
 input[type="range"] { accent-color: var(--accent); width: 140px; }
 .chk { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; }
@@ -181,6 +183,13 @@ pre { font-family: var(--mono); font-size: 12.5px; background: var(--panel); bor
             <button type="button" id="modeSingle" aria-pressed="true">単独</button>
             <button type="button" id="modeCompare" aria-pressed="false">2手法を並べる</button>
           </div>
+        </div>
+        <div class="row"><label class="cap">表示対象</label>
+          <div class="seg">
+            <button type="button" id="geoPts" aria-pressed="true">点群</button>
+            <button type="button" id="geoMesh" aria-pressed="false">メッシュ</button>
+          </div>
+          <span class="tag" id="meshNote" style="font-size:12px;color:var(--muted)"></span>
         </div>
         <div class="row"><label class="cap">色</label>
           <div class="seg" id="colorSeg">
@@ -269,9 +278,20 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   controls.dampingFactor = 0.12;
   controls.screenSpacePanning = true;
 
-  const state = { runs: [], meta: null, a: 0, b: 1, compare: false, color: "rgb", size: 2, traj: true, zclip: 1 };
+  const state = { runs: [], meta: null, a: 0, b: 1, compare: false, color: "rgb", size: 2, traj: true, zclip: 1, geo: "points" };
   const scenes = {};
   let globalZ = [0, 1];
+
+  // .bin はそのまま、.txt は base64 テキスト (バイナリを配信できないホスト向け) として読む
+  async function fetchBinary(name) {
+    const res = await fetch("data/" + name);
+    if (!res.ok) throw new Error(name + " (HTTP " + res.status + ")");
+    if (!name.endsWith(".txt")) return res.arrayBuffer();
+    const bin = atob((await res.text()).trim());
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out.buffer;
+  }
 
   function heightColors(pos, count, zmin, zmax) {
     const out = new Uint8Array(count * 3);
@@ -286,7 +306,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   }
 
   async function loadRun(run) {
-    const buf = await (await fetch("data/" + run.file)).arrayBuffer();
+    const buf = await fetchBinary(run.file);
     const n = run.count;
     const q = new Int16Array(buf, 0, n * 3);
     const rgb = new Uint8Array(buf, n * 6, n * 3);
@@ -320,7 +340,30 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
     scenes[run.id] = { scene, pts, line, pos, colRgb, colHeight: null, zlo, zhi, box: geo.boundingBox, run };
   }
 
+  async function ensureMesh(s) {
+    const m = s.run.mesh;
+    if (!m || s.mesh || s.meshLoading) return;
+    s.meshLoading = true;
+    const buf = await fetchBinary(m.file);
+    const nv = m.faces * 3;
+    const q = new Int16Array(buf, 0, nv * 3);
+    const pos = new Float32Array(nv * 3);
+    for (let i = 0; i < nv * 3; i++) pos[i] = q[i] * m.scale;
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("color", new THREE.BufferAttribute(new Uint8Array(buf, nv * 6, nv * 3).slice(), 3, true));
+    s.mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    s.scene.add(s.mesh);
+    s.meshLoading = false;
+    applyColor(s);
+    render();
+  }
+
   function applyColor(s) {
+    const wantMesh = state.geo === "mesh" && s.run.mesh;
+    s.pts.visible = !wantMesh;
+    if (s.mesh) s.mesh.visible = !!wantMesh;
+    if (wantMesh && !s.mesh) ensureMesh(s);
     if (state.color === "height" || !s.run.colored_ratio) {
       if (!s.colHeight) s.colHeight = new THREE.BufferAttribute(heightColors(s.pos, s.run.count, s.zlo, s.zhi), 3, true);
       s.pts.geometry.setAttribute("color", s.colHeight);
@@ -333,6 +376,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
     // 高さ上限クリップ (drawRange ではなくシェーダ無しで済ませるため clippingPlanes を使う)
     const zc = s.zlo + (s.zhi - s.zlo) * 1.15 * state.zclip;
     s.pts.material.clippingPlanes = state.zclip < 1 ? [new THREE.Plane(new THREE.Vector3(0, 0, -1), zc)] : [];
+    if (s.mesh) { s.mesh.material.clippingPlanes = s.pts.material.clippingPlanes; s.mesh.material.needsUpdate = true; }
   }
 
   function refreshAll() {
@@ -431,7 +475,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
       const t = r.trajectory || {};
       return `<button type="button" class="run" aria-pressed="${pressed}" data-i="${i}">
         <span class="nm">${r.name}</span><span class="slot">${slot}</span>
-        <span class="meta">${fmtInt(r.count_full)} 点 · ${r.colored_ratio ? Math.round(r.colored_ratio * 100) + "% 色付き" : "色なし"}${t.length_m ? " · " + t.length_m.toFixed(0) + " m" : ""}</span>
+        <span class="meta">${fmtInt(r.count_full)} 点 · ${r.colored_ratio ? Math.round(r.colored_ratio * 100) + "% 色付き" : "色なし"}${t.length_m ? " · " + t.length_m.toFixed(0) + " m" : ""}${r.mesh ? " · メッシュあり" : ""}</span>
       </button>`;
     }).join("");
     $("runs").innerHTML = html;
@@ -445,6 +489,11 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
       statCard("地図の広さ (x×y)", r.extent_m[0].toFixed(0) + "×" + r.extent_m[1].toFixed(0) + " m") +
       statCard("色付き率", r.colored_ratio ? (r.colored_ratio * 100).toFixed(0) + "%" : "色なし");
     $("runNote").textContent = r.note || "";
+    const anyMesh = state.runs.some((x) => x.mesh);
+    $("geoMesh").disabled = !anyMesh;
+    $("meshNote").textContent = state.geo === "mesh"
+      ? (r.mesh ? fmtInt(r.mesh.faces) + " 面 (元 " + fmtInt(r.mesh.faces_full) + " 面)" : "この手法はメッシュなし。点群を表示")
+      : "";
     $("labelA").textContent = (state.compare ? "A · " : "") + r.name;
     $("labelB").hidden = !state.compare;
     $("divider").hidden = !state.compare;
@@ -471,7 +520,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
         <td class="num">${fmtInt(r.count_full)}</td>
         <td class="num">${r.colored_ratio ? (r.colored_ratio * 100).toFixed(0) + "%" : "—"}</td>
         <td class="num">${len}</td><td class="num">${dur}</td><td class="num">${driftPill(r.trajectory)}</td>
-        <td>${r.outputs || ""}</td></tr>`;
+        <td>${r.mesh ? "色付き点群 + メッシュ" : r.colored_ratio ? "色付き点群" : "点群"}</td></tr>`;
     }).join("");
   }
 
@@ -483,6 +532,8 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
     state.compare = true; if (state.b === state.a) state.b = (state.a + 1) % state.runs.length;
     setPressed(["modeSingle", "modeCompare"], "modeCompare"); renderPanel(); render();
   };
+  $("geoPts").onclick = () => { state.geo = "points"; setPressed(["geoPts", "geoMesh"], "geoPts"); renderPanel(); refreshAll(); };
+  $("geoMesh").onclick = () => { state.geo = "mesh"; setPressed(["geoPts", "geoMesh"], "geoMesh"); renderPanel(); refreshAll(); };
   $("colRgb").onclick = () => { state.color = "rgb"; setPressed(["colRgb", "colHeight"], "colRgb"); refreshAll(); };
   $("colHeight").onclick = () => { state.color = "height"; setPressed(["colRgb", "colHeight"], "colHeight"); refreshAll(); };
   $("viewTop").onclick = () => frame("top");
