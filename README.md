@@ -58,7 +58,8 @@ docker run --rm -v ~/bags:/data:ro -v $PWD/my_calib.yaml:/config/calib.yaml:ro -
 ### 3. 結果を見る
 
 - 点群・メッシュは CloudCompare や MeshLab で開けます
-- [`viewer/`](viewer/) はブラウザで複数手法の地図 (点群・メッシュ・軌跡) を並べて比較するビューアです
+- [`viewer/`](viewer/) はブラウザで複数手法の地図 (点群・メッシュ・軌跡) を並べて比較するビューアです。公開版: <https://bols-blue.github.io/drone-slam-docker/> (実飛行データと公開データセットの比較。`viewer/**` を main に push すると `.github/workflows/pages.yml` が再公開します)
+- 公開版の公開データセット (R3LIVE dataset) 由来の地図は CC BY-NC-SA 4.0 (非商用) です。データセットを追加するときは `viewer/data/<id>/` に書き出し、`viewer/data/datasets.json` に登録します
 
 ```bash
 # 点群 + 軌跡 (numpy のみ。tools イメージで動く)
@@ -69,7 +70,7 @@ docker run --rm -u $(id -u) -v $PWD:/w -w /w --entrypoint python ghcr.io/bols-bl
 # メッシュ (open3d が必要。fast-lio2-openmvs イメージで動く)
 docker run --rm -u $(id -u) -v $PWD:/w -w /w --entrypoint python3 ghcr.io/bols-blue/drone-slam:fast-lio2-openmvs \
   viewer/export_mesh.py --data viewer/data --id r3live --mesh output/r3live_xxx/textured_mesh.ply
-python3 -m http.server -d viewer 8000   # http://localhost:8000
+python3 -m http.server -d viewer 8000   # http://localhost:8000 (#<データセットid> で切り替え)
 ```
 
   メッシュのテクスチャは頂点色に焼き込み、表示用に約 22 万面へ間引いています。細部は元の OBJ / PLY を MeshLab 等で確認してください

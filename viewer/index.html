@@ -61,6 +61,13 @@ h1 { font-size: 26px; font-weight: 700; margin: 0; letter-spacing: .01em; text-w
 h1 small { font-family: var(--mono); font-size: 13px; font-weight: 400; color: var(--muted); margin-left: 10px; letter-spacing: 0; }
 .dataset { color: var(--muted); font-size: 13px; }
 .dataset b { color: var(--ink); font-weight: 500; }
+.dsnav { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 13px; color: var(--muted); }
+.dsnav a {
+  color: var(--ink); text-decoration: none; padding: 3px 10px; border: 1px solid var(--line); border-radius: 99px;
+}
+.dsnav a:hover { border-color: var(--muted); }
+.dsnav a[aria-current="page"] { border-color: var(--accent); background: var(--accent-soft); }
+.dsnav a:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 
 .stage { display: grid; grid-template-columns: minmax(0, 1fr) 340px; gap: 16px; align-items: start; }
 @media (max-width: 900px) { .stage { grid-template-columns: 1fr; } }
@@ -158,6 +165,7 @@ pre { font-family: var(--mono); font-size: 12.5px; background: var(--panel); bor
     <h1>SLAM Map Bench<small>drone-slam-docker</small></h1>
     <div class="dataset" id="dataset">データ読み込み中…</div>
   </header>
+  <nav class="dsnav" id="dsnav" hidden aria-label="データセット"></nav>
 
   <section class="stage">
     <div class="viewport" id="viewport">
@@ -284,7 +292,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
 
   // .bin はそのまま、.txt は base64 テキスト (バイナリを配信できないホスト向け) として読む
   async function fetchBinary(name) {
-    const res = await fetch("data/" + name);
+    const res = await fetch(dataBase + name);
     if (!res.ok) throw new Error(name + " (HTTP " + res.status + ")");
     if (!name.endsWith(".txt")) return res.arrayBuffer();
     const bin = atob((await res.text()).trim());
@@ -548,12 +556,33 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   $("showTraj").onchange = (e) => { state.traj = e.target.checked; refreshAll(); };
   window.addEventListener("resize", resize);
 
+  // data/datasets.json があれば複数データセットを切り替える (#<id> で直接開ける)。無ければ data/manifest.json
+  let dataBase = "data/";
+  async function pickDataset() {
+    let list = null;
+    try {
+      const res = await fetch("data/datasets.json");
+      if (res.ok) list = (await res.json()).datasets;
+    } catch (e) { list = null; }
+    if (!list || !list.length) return;
+    const want = decodeURIComponent(location.hash.replace(/^#/, ""));
+    const cur = list.find((d) => d.id === want) || list[0];
+    dataBase = "data/" + cur.dir.replace(/\/?$/, "/");
+    const nav = $("dsnav");
+    nav.innerHTML = "<span>データセット:</span>" + list.map((d) =>
+      `<a href="#${d.id}"${d === cur ? ' aria-current="page"' : ""}>${d.title}</a>`).join("");
+    nav.hidden = list.length < 2;
+    window.addEventListener("hashchange", () => location.reload());
+  }
+
   (async function init() {
     try {
-      const meta = await (await fetch("data/manifest.json")).json();
+      await pickDataset();
+      const meta = await (await fetch(dataBase + "manifest.json")).json();
       state.meta = meta;
       state.runs = meta.runs;
       $("dataset").innerHTML = meta.dataset || "";
+      if (meta.notes && meta.notes.length) $("footList").innerHTML = meta.notes.map((n) => "<li>" + n + "</li>").join("");
       renderPanel(); renderTable(); resize();
       for (let i = 0; i < state.runs.length; i++) {
         $("status").textContent = `点群を読み込み中… (${i + 1}/${state.runs.length}) ${state.runs[i].name}`;

@@ -144,6 +144,9 @@ def main():
     ap.add_argument("--image-every", type=int, default=1, help="画像を N 枚に 1 枚だけ残す (間引き)")
     ap.add_argument("--header-time", action="store_true",
                     help="bag の記録時刻ではなくヘッダ時刻を ROS1 bag の時刻に使う (再生順がヘッダ時刻順になる)")
+    ap.add_argument("--imu-ms2-copy", nargs="*", default=[], metavar="TOPIC",
+                    help="加速度が g 単位の IMU トピックについて、9.80665 倍した複製を <TOPIC>_ms2 として追加する "
+                         "(m/s^2 前提の LVI-SAM に Mid-360S 内蔵IMU を入力する場合など)")
     ap.add_argument("--compress", choices=["none", "bz2", "lz4"], default="none")
     args = ap.parse_args()
 
@@ -194,6 +197,10 @@ def main():
         img_counter = {}
         with writer:
             out_conns = {}
+            ms2_conns = {}
+            for c in conns:
+                if c.topic in args.imu_ms2_copy and c.msgtype == "sensor_msgs/msg/Imu":
+                    ms2_conns[c.id] = writer.add_connection(c.topic + "_ms2", "sensor_msgs/msg/Imu", typestore=ts_out)
             for c in conns:
                 out_topic = c.topic
                 out_type = TYPE_RENAME.get(c.msgtype, c.msgtype)
@@ -238,6 +245,12 @@ def main():
                     t = out.header.stamp.sec * 1_000_000_000 + out.header.stamp.nanosec
                 writer.write(wconn, t, ts_out.serialize_ros1(out, out_type))
                 counts[wconn.topic] = counts.get(wconn.topic, 0) + 1
+                if c.id in ms2_conns:
+                    a = out.linear_acceleration
+                    out.linear_acceleration = type(a)(x=a.x * 9.80665, y=a.y * 9.80665, z=a.z * 9.80665)
+                    mconn = ms2_conns[c.id]
+                    writer.write(mconn, t, ts_out.serialize_ros1(out, out_type))
+                    counts[mconn.topic] = counts.get(mconn.topic, 0) + 1
 
     print("[done]", dst)
     for topic, n in sorted(counts.items()):

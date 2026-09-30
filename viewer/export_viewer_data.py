@@ -129,7 +129,10 @@ def main():
                     help="id:表示名:点群ファイル[:軌跡ファイル[:メモ]]")
     ap.add_argument("--voxel", type=float, default=0.15)
     ap.add_argument("--cap", type=int, default=450000)
-    ap.add_argument("--dataset", default="")
+    ap.add_argument("--dataset", default="", help="ヘッダに出すデータセットの説明 (HTML 可)")
+    ap.add_argument("--note", action="append", default=[], help="ページ下部の「この結果について」の項目 (HTML 可、複数指定可)")
+    ap.add_argument("--flip-ids", nargs="*", default=[],
+                    help="x 軸まわりに 180° 回して表示する run id (重力整列しない手法で LiDAR を天地逆に付けた場合)")
     args = ap.parse_args()
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
@@ -140,12 +143,17 @@ def main():
         traj_path = parts[3] if len(parts) > 3 else ""
         note = ":".join(parts[4:]) if len(parts) > 4 else ""
         xyz, rgb = (read_ply if cloud.lower().endswith(".ply") else read_pcd)(cloud)
+        flip = np.array([1.0, -1.0, -1.0]) if rid in args.flip_ids else None
+        if flip is not None:
+            xyz = xyz * flip.astype(np.float32)
         ok = np.isfinite(xyz).all(1)
         xyz, rgb = xyz[ok], (rgb[ok] if rgb is not None else None)
         n_full = len(xyz)
         colored = 0.0 if rgb is None else float((rgb.astype(int).sum(1) > 0).mean())
         xyz, rgb = voxel_downsample(xyz, rgb, args.voxel, args.cap)
         traj = read_traj(traj_path)
+        if flip is not None and traj is not None:
+            traj[:, 1:4] *= flip
         # 手法間で並べて比較しやすいよう、原点は軌跡の始点 (無ければ点群の中央値) にする
         center = np.round(traj[0, 1:4] if traj is not None else np.median(xyz, 0), 3)
         rel = xyz - center
@@ -177,7 +185,7 @@ def main():
             "center": center.tolist(), "extent_m": np.round(hi - lo, 1).tolist(), "trajectory": tinfo,
         })
         print(f"{rid}: {n_full} -> {len(xyz)} pts, file {(out / (rid + '.bin')).stat().st_size / 1e6:.1f} MB")
-    (out / "manifest.json").write_text(json.dumps({"dataset": args.dataset, "voxel_m": args.voxel, "runs": runs},
+    (out / "manifest.json").write_text(json.dumps({"dataset": args.dataset, "notes": args.note, "voxel_m": args.voxel, "runs": runs},
                                                   ensure_ascii=False))
 
 

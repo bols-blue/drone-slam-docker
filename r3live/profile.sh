@@ -32,6 +32,11 @@ algo_launch() {
 # 再生終了後: トリガファイルで地図保存 -> SLAM 終了 -> オフラインでメッシュ化 + テクスチャ
 algo_finish() {
   local timeout="${R3LIVE_SAVE_TIMEOUT:-900}"
+  # 色付き地図の保存は VIO スレッドが行うため、画像の無い bag では保存されない。長く待たずに終える
+  if ! grep -qE "^\s*(topics:)?\s*${IMAGE_TOPIC}(/compressed)?\s" "$OUT/bag_info.txt" 2>/dev/null; then
+    echo "[r3live] WARNING: bag に画像トピック ${IMAGE_TOPIC} がありません。R3LIVE は画像なしでは地図を保存しないため、軌跡のみ出力します" >&2
+    timeout=10
+  fi
   echo "[r3live] 地図保存をトリガ (最大 ${timeout}s 待機)"
   rm -f "$R3_TRIGGER.done"
   touch "$R3_TRIGGER"
