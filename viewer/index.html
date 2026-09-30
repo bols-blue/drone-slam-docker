@@ -1,4 +1,8 @@
+<!doctype html>
+<html lang="ja">
+<head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SLAM Map Bench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -46,6 +50,9 @@
   --warn: #e0ac3c;
 }
 * { box-sizing: border-box; }
+/* hidden 属性は要素側の display 指定より常に優先する (状態表示などを el.hidden で消すため) */
+[hidden] { display: none !important; }
+html, body { margin: 0; }
 body {
   background: var(--paper);
   color: var(--ink);
@@ -159,6 +166,8 @@ code { font-family: var(--mono); font-size: 12.5px; background: var(--accent-sof
 pre { font-family: var(--mono); font-size: 12.5px; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 12px; overflow-x: auto; margin: 0; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
+</head>
+<body>
 
 <div class="wrap">
   <header>
@@ -598,3 +607,5 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   })();
 })();
 </script>
+</body>
+</html>
