@@ -55,6 +55,20 @@ docker run --rm -v ~/bags:/data:ro -v $PWD/my_calib.yaml:/config/calib.yaml:ro -
 
 `slam-replay` (各イメージの ENTRYPOINT) のオプション: `--rate` `--start` `--duration` `--tail` (再生後の待ち秒数) `--rviz` (X11 が必要) `--no-record`。
 
+### bag から比較ビューア (HTML) まで一括で作る
+
+`bag2html.py` は、bag のフォルダを渡すだけで「ROS1 への変換 → 実行できる手法の自動選択 → 各手法でリプレイ → ビューア作成」までを行います。必要なのは Docker と Python 3.8 以上 (標準ライブラリのみ) です。
+
+```bash
+python3 bag2html.py ~/drone_slam_bags/raw_20260925_004138 --calib ./my_calib.yaml
+# 出力: ./output/raw_20260925_004138/report.html (ダブルクリックで開ける 1 ファイル版)
+```
+
+- bag の中身から、カメラ画像・FC の IMU の有無、IMU の単位 (g / m/s²)、LiDAR の天地逆取り付けを判定し、意味のある結果が出る手法だけを実行します (理由はログと `summary.md` に出ます)。`--algos fast-livo2,r3live` のように手法を指定することもできます
+- `report.html` は地図データと three.js を埋め込んだ 1 ファイルなので、オフラインでも開けます。`viewer/` は Web サーバに置く版です
+- 所要時間の目安は「bag の長さ × 手法数 + 変換数分」です (243 秒の bag で 2 手法: 約 19 分)。`--duration 60` で先頭だけ試せます
+- 主なオプション: `--out` `--rate` `--start` `--duration` `--title` `--no-pull` (`bag2html.py --help`)
+
 ### 3. 結果を見る
 
 - 点群・メッシュは CloudCompare や MeshLab で開けます

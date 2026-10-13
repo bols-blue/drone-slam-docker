@@ -300,14 +300,28 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   let globalZ = [0, 1];
 
   // .bin はそのまま、.txt は base64 テキスト (バイナリを配信できないホスト向け) として読む
-  async function fetchBinary(name) {
-    const res = await fetch(dataBase + name);
-    if (!res.ok) throw new Error(name + " (HTTP " + res.status + ")");
-    if (!name.endsWith(".txt")) return res.arrayBuffer();
-    const bin = atob((await res.text()).trim());
+  // 1 ファイル版 (bag2html.py の report.html) は window.EMBEDDED_DATA にデータを埋め込む
+  // ({"data/<path>": JSON オブジェクト または base64 文字列})。無ければ fetch で読む
+  const EMB = window.EMBEDDED_DATA || null;
+  function b64ToBuffer(b64) {
+    const bin = atob(b64.trim());
     const out = new Uint8Array(bin.length);
     for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
     return out.buffer;
+  }
+  async function getJSON(path) {
+    if (EMB && path in EMB) return EMB[path];
+    const res = await fetch(path);
+    if (!res.ok) throw new Error(path + " (HTTP " + res.status + ")");
+    return res.json();
+  }
+
+  async function fetchBinary(name) {
+    if (EMB && (dataBase + name) in EMB) return b64ToBuffer(EMB[dataBase + name]);
+    const res = await fetch(dataBase + name);
+    if (!res.ok) throw new Error(name + " (HTTP " + res.status + ")");
+    if (!name.endsWith(".txt")) return res.arrayBuffer();
+    return b64ToBuffer(await res.text());
   }
 
   function heightColors(pos, count, zmin, zmax) {
@@ -570,8 +584,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   async function pickDataset() {
     let list = null;
     try {
-      const res = await fetch("data/datasets.json");
-      if (res.ok) list = (await res.json()).datasets;
+      list = (await getJSON("data/datasets.json")).datasets;
     } catch (e) { list = null; }
     if (!list || !list.length) return;
     const want = decodeURIComponent(location.hash.replace(/^#/, ""));
@@ -587,7 +600,7 @@ python3 viewer/export_viewer_data.py --out viewer/data --run id:表示名:地図
   (async function init() {
     try {
       await pickDataset();
-      const meta = await (await fetch(dataBase + "manifest.json")).json();
+      const meta = await getJSON(dataBase + "manifest.json");
       state.meta = meta;
       state.runs = meta.runs;
       $("dataset").innerHTML = meta.dataset || "";
