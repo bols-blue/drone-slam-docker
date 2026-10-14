@@ -40,6 +40,15 @@ drone-slam-bag2html ~/drone_slam_bags/raw_20260925_004138 --calib ./my_calib.yam
 3. 意味のある結果が出る手法だけを選んで、順にリプレイする (選ばなかった理由はログと `summary.md` に出る)
 4. 地図・メッシュ・軌跡をビューア用に軽量化し、`report.html` (データと three.js を埋め込んだ 1 ファイル。オフラインでも開ける) と `summary.md` を書き出す
 
+複数の bag をまとめて処理するときは、bag を並べるか、bag の入ったフォルダを渡します (2 階層下まで探します)。1 本ずつ順に処理し、失敗しても次の bag に進みます。最後に全 bag の結果と警告の一覧 (`output/batch_summary.md`) と、各ビューアへのリンク集 (`output/index.html`) を作ります。途中で止めた場合は `--skip-done` で処理済みの bag を飛ばして再開できます。
+
+```bash
+drone-slam-bag2html ~/drone_slam_bags/20261014 --calib ./my_calib.yaml               # フォルダ内の bag を全部
+drone-slam-bag2html bagA bagB bagC --calib ./my_calib.yaml --skip-done
+```
+
+IMU のレートが想定 (100 Hz) より低い bag や、LiDAR のデータが 0 件の bag も、処理は止めずに終了時の「警告」欄に表示します (LiDAR が 0 件の bag は変換の前に判定して飛ばします)。
+
 所要時間の目安は「bag の長さ × 手法数 + 変換の数分」です (243 秒の bag で 2 手法: 約 19 分)。`--duration 60` で先頭だけ試せます。主なオプション: `--algos fast-livo2,r3live` `--out` `--rate` `--start` `--duration` `--title` `--no-pull` (`python3 bag2html.py --help`)。
 
 ## イメージ一覧

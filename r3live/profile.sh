@@ -37,6 +37,15 @@ algo_finish() {
     echo "[r3live] WARNING: bag に画像トピック ${IMAGE_TOPIC} がありません。R3LIVE は画像なしでは地図を保存しないため、軌跡のみ出力します" >&2
     timeout=10
   fi
+  # 処理状況の表 (| System-time | LiDAR-frame | Camera-frame | ...) でカメラが 0 フレームなら VIO が動いておらず、
+  # 地図は保存されないので長く待たない (IMU が遅い・カメラの設定が合わない場合など)
+  local cam_frames
+  cam_frames=$(sed 's/\x1b\[[0-9;]*[a-zA-Z]//g' "$OUT/slam.log" 2>/dev/null | grep -a '^|' | grep -v 'System-time' | tail -1 \
+    | awk -F'|' '{gsub(/ /, "", $4); print $4}')
+  if [[ "$cam_frames" == "0" ]]; then
+    echo "[r3live] WARNING: カメラ画像が 1 枚も処理されていないため (VIO が動いていない)、地図は保存されません。軌跡のみ出力します" >&2
+    timeout=10
+  fi
   echo "[r3live] 地図保存をトリガ (最大 ${timeout}s 待機)"
   rm -f "$R3_TRIGGER.done"
   touch "$R3_TRIGGER"

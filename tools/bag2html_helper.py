@@ -81,9 +81,10 @@ def probe(args):
         warnings.append("IMU トピック %s が無いので %s を使います" % (imu, cands[0]))
         imu = topics_cfg["imu"] = cands[0]
     imu_hz = counts[imu] / duration
-    if imu_hz < 50:
-        sys.exit("[probe] IMU %s が %.1f Hz しかありません。SLAM には 100 Hz 以上必要です"
-                 " (ArduPilot なら RAW_IMU の送信レートを上げる。drone_slam の docs/time_sync.md 参照)" % (imu, imu_hz))
+    if imu_hz < 100:
+        # 処理は止めずに続け、終了時のまとめに警告として出す (結果を見て検討できるように)
+        warnings.append("IMU %s が %.1f Hz しかありません (100 Hz 以上を想定)。軌跡・地図の精度が落ちたり発散したり"
+                        "する可能性があります (ArduPilot なら RAW_IMU の送信レートを上げる)" % (imu, imu_hz))
     notes.append("LiDAR %s %.1f Hz / IMU %s %.1f Hz" % (lidar, counts[lidar] / duration, imu, imu_hz))
 
     # 回転式 LiDAR (XT16 等、16 ライン以上) はライン番号が大きいほど上向きのレーザー。
@@ -138,8 +139,10 @@ def probe(args):
 
     fc_imu = topics_cfg.get("fc_imu", "/mavros/imu/data")
     fc_hz = counts.get(fc_imu, 0) / duration
-    has_fc_imu = fc_imu in types and fc_imu != imu and fc_hz >= 50
-    fc_slow = fc_imu in types and fc_imu != imu and 0 < fc_hz < 50
+    has_fc_imu = fc_imu in types and fc_imu != imu and fc_hz > 0
+    if has_fc_imu and fc_hz < 100:
+        warnings.append("LVI-SAM が使う姿勢付き IMU %s が %.1f Hz しかありません (100 Hz 以上を想定)。"
+                        "LVI-SAM の結果は参考程度です (ArduPilot なら ATTITUDE の送信レートを上げる)" % (fc_imu, fc_hz))
     has_ms2 = (imu + "_ms2") in types
 
     main = copy.deepcopy(base)
@@ -163,9 +166,6 @@ def probe(args):
         deep_set(lvi, ["imu", "acc_in_g"], False)
     elif has_ms2 and inverted:
         skip["lvi-sam"] = "FC の IMU (%s) が bag に無く、内蔵 6 軸 IMU が天地逆のため発散する" % fc_imu
-    elif fc_slow:
-        skip["lvi-sam"] = "姿勢付き IMU (%s) が %.1f Hz しかない (100 Hz 以上必要。ArduPilot なら ATTITUDE を上げる)" % (
-            fc_imu, fc_hz)
     else:
         skip["lvi-sam"] = "姿勢付き IMU (%s) が bag に無い" % fc_imu
 

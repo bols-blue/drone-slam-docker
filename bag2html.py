@@ -2,6 +2,10 @@
 """rosbag を渡すと、変換 → 各 SLAM 手法でリプレイ → 比較ビューア (HTML) 作成までを一括で行う。
 
   python3 bag2html.py ~/drone_slam_bags/raw_20260925_004138 --calib configs/my_calib.yaml
+  python3 bag2html.py ~/drone_slam_bags/20261014 --calib configs/my_calib.yaml   # フォルダ内の bag を全部
+
+複数の bag (または bag の入ったフォルダ) を渡すと 1 本ずつ順に処理し、失敗しても次へ進む。
+最後に <out>/batch_summary.md と <out>/index.html (各 report.html へのリンク集) を作る。
 
 出力 (既定: ./output/<bag名>/):
   report.html       データを埋め込んだ 1 ファイルのビューア (ダブルクリックで開ける)
@@ -160,11 +164,66 @@ def build_report(viewer_dir, out_html, title, cache_dir):
     out_html.write_text(html)
 
 
+BAG_SUFFIXES = (".mcap", ".db3", ".bag")
+
+
+def bag_stem(src):
+    name = src.name
+    for ext in BAG_SUFFIXES:
+        if name.endswith(ext):
+            name = name[: -len(ext)]
+    return name
+
+
+LIDAR_TYPES = ("sensor_msgs/msg/PointCloud2", "livox_ros_driver2/msg/CustomMsg")
+
+
+def ros2_topic_counts(src):
+    """ROS2 bag の metadata.yaml からトピックごとの (型, 件数) を読む (PyYAML を使わない)。読めなければ None"""
+    meta = src / "metadata.yaml" if src.is_dir() else src.parent / "metadata.yaml"
+    if not meta.exists():
+        return None
+    counts, name, typ = {}, None, None
+    for line in meta.read_text(errors="ignore").splitlines():
+        m = re.match(r"\s+name:\s*(\S+)", line)
+        if m:
+            name = m.group(1)
+            continue
+        m = re.match(r"\s+type:\s*(\S+)", line)
+        if m and name:
+            typ = m.group(1)
+            continue
+        m = re.match(r"\s+message_count:\s*(\d+)", line)
+        if m and name:
+            counts[name] = (typ, int(m.group(1)))
+            name = typ = None
+    return counts
+
+
+def find_bags(path, depth=2):
+    """bag 本体ならそれ自身、bag ではないディレクトリなら中の bag を (depth 階層まで) 探して返す"""
+    if path.is_file():
+        return [path] if path.suffix in BAG_SUFFIXES and not path.name.endswith(".ros1.bag") else []
+    if (path / "metadata.yaml").exists():
+        return [path]
+    if depth <= 0:
+        return []
+    found = []
+    for child in sorted(path.iterdir()):
+        # bag2html の出力 (output/, 変換済みの *.ros1.bag) は対象にしない
+        if child.name in ("output", "work", "runs") or child.name.startswith("."):
+            continue
+        found += find_bags(child, depth - 1)
+    return found
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("bag", help="ROS2 bag ディレクトリ / .mcap / .db3、または ROS1 .bag")
+    ap.add_argument("bag", nargs="+",
+                    help="ROS2 bag ディレクトリ / .mcap / .db3 / ROS1 .bag。複数指定、または bag の入った"
+                         "ディレクトリを渡すと中の bag を順に全部処理する")
     ap.add_argument("--calib", help="共通キャリブレーション (既定: common/config/calib.yaml の仮値)")
-    ap.add_argument("--out", help="出力ディレクトリ (既定: ./output/<bag名>)")
+    ap.add_argument("--out", help="出力ディレクトリ (既定: ./output/<bag名>。複数 bag のときは <out>/<bag名>/)")
     ap.add_argument("--algos", default="auto",
                     help="実行する手法をカンマ区切りで (%s)。auto は bag の中身から選ぶ" % ",".join(ALL_ALGOS))
     ap.add_argument("--rate", type=float, default=1.0, help="再生速度 (処理が追いつかなければ 0.5 など)")
@@ -174,19 +233,67 @@ def main():
                     help="Docker イメージ名 (タグを除く)")
     ap.add_argument("--title", help="ビューアのタイトル (既定: bag 名)")
     ap.add_argument("--no-pull", action="store_true", help="開始時に Docker イメージを最新に更新しない")
+    ap.add_argument("--skip-done", action="store_true",
+                    help="(複数 bag) 出力に report.html か summary.md が既にある bag は飛ばす (途中から再開する場合)")
     ap.add_argument("--timeout", type=int, default=7200, help="1 手法あたりの制限時間 [s]")
     args = ap.parse_args()
 
     if shutil.which("docker") is None:
         sys.exit("docker が見つかりません")
-    src = Path(args.bag).expanduser().resolve()
-    if not src.exists():
-        sys.exit("bag が見つかりません: %s" % src)
-    name = src.name
-    for ext in (".mcap", ".db3", ".bag"):
-        if name.endswith(ext):
-            name = name[: -len(ext)]
-    out = Path(args.out).expanduser().resolve() if args.out else (Path.cwd() / "output" / name)
+    bags = []
+    for b in args.bag:
+        p = Path(b).expanduser().resolve()
+        if not p.exists():
+            sys.exit("bag が見つかりません: %s" % p)
+        found = find_bags(p)
+        if not found:
+            sys.exit("bag が見つかりません: %s (ROS2 bag は metadata.yaml のあるディレクトリ)" % p)
+        # シンボリックリンクは実体のパスにする (Docker にマウントしたときにリンク先が見えないため)
+        bags += [f.resolve() for f in found if f.resolve() not in bags]
+
+    pulled = set()
+    if len(bags) == 1:
+        src = bags[0]
+        out = Path(args.out).expanduser().resolve() if args.out else (Path.cwd() / "output" / bag_stem(src))
+        try:
+            process_bag(args, src, out, pulled)
+        except (RuntimeError, SystemExit) as e:
+            sys.exit(str(e))
+        return
+
+    # ---- 複数 bag: 1 本ずつ処理し、失敗しても次へ進む ----
+    root = Path(args.out).expanduser().resolve() if args.out else (Path.cwd() / "output")
+    log("%d 本の bag を順に処理します (出力: %s/<bag名>/)" % (len(bags), root))
+    for i, b in enumerate(bags, 1):
+        log("  %2d. %s" % (i, b))
+    t_all = time.time()
+    batch = []
+    for i, src in enumerate(bags, 1):
+        out = root / bag_stem(src)
+        print()
+        log("===== [%d/%d] %s =====" % (i, len(bags), src.name))
+        if args.skip_done and ((out / "report.html").exists() or (out / "summary.md").exists()):
+            log("処理済みなので飛ばします (--skip-done)")
+            batch.append({"bag": src.name, "out": out, "status": "処理済み", "results": [], "warnings": [], "error": None})
+            continue
+        t0 = time.time()
+        try:
+            info = process_bag(args, src, out, pulled)
+            info.update(bag=src.name, out=out, status="完了", error=None)
+        except (RuntimeError, SystemExit) as e:
+            msg = str(e).strip().splitlines()
+            # 中身の確認 ([probe] ...) で止まった場合はその理由を、それ以外は先頭行を表示する
+            why = next((l for l in reversed(msg) if l.startswith("[probe]")), msg[0] if msg else "不明なエラー")
+            log("ERROR: %s" % why)
+            info = {"bag": src.name, "out": out, "status": "エラー", "results": [], "warnings": [], "error": why}
+        info["elapsed_s"] = round(time.time() - t0)
+        batch.append(info)
+    write_batch_summary(root, batch, time.time() - t_all)
+
+
+def process_bag(args, src, out, pulled):
+    """1 本の bag を処理する。止まる理由があれば RuntimeError / SystemExit を投げる"""
+    name = bag_stem(src)
     calib = Path(args.calib).expanduser().resolve() if args.calib else REPO / "common" / "config" / "calib.yaml"
     if not args.calib:
         log("WARNING: --calib が無いので仮値の calib.yaml を使います (色付け・テクスチャは正しくなりません)")
@@ -196,14 +303,20 @@ def main():
     t_start = time.time()
     log("出力先: %s" % out)
 
-    pulled = set()
-
     def pull(tag):
         if args.no_pull or tag in pulled:
             return
         pulled.add(tag)
         log("イメージを確認中: %s:%s" % (img, tag))
         run(["docker", "pull", "-q", "%s:%s" % (img, tag)], logfile=out / "logs" / ("pull_%s.log" % tag), check=False)
+
+    # ---- 0. LiDAR のデータが入っているか (変換の前に metadata.yaml で確認) ----
+    counts = ros2_topic_counts(src) if not (src.is_file() and src.suffix == ".bag") else None
+    if counts:
+        lidar_topics = {t: n for t, (ty, n) in counts.items() if ty in LIDAR_TYPES}
+        if lidar_topics and all(n == 0 for n in lidar_topics.values()):
+            raise RuntimeError("[probe] LiDAR のデータが記録されていません (%s が 0 件)。記録時に LiDAR ドライバが"
+                               "動いていたか確認してください" % ", ".join(sorted(lidar_topics)))
 
     # ---- 1. ROS1 bag に変換 ----
     is_ros1 = src.is_file() and src.suffix == ".bag"
@@ -365,7 +478,7 @@ def main():
     for a, why in (probe["skip"].items() if args.algos == "auto" else []):
         lines.append("| %s | 未実行 | — | — | — | %s |" % (NAMES[a], why))
     if probe["warnings"]:
-        lines += ["", "注意:"] + ["- " + w for w in probe["warnings"]]
+        lines += ["", "警告:"] + ["- " + w for w in probe["warnings"]]
     (out / "summary.md").write_text("\n".join(lines) + "\n")
     (out / "summary.json").write_text(json.dumps({"probe": probe, "results": results}, ensure_ascii=False, indent=1))
     print()
@@ -374,6 +487,53 @@ def main():
     log("完了 (%d 分)。" % round((time.time() - t_start) / 60))
     if shows:
         log("ビューア: %s" % (out / "report.html"))
+    return {"results": results, "warnings": probe["warnings"], "skip": probe["skip"] if args.algos == "auto" else {},
+            "report": (out / "report.html") if shows else None}
+
+
+def write_batch_summary(root, batch, elapsed):
+    """複数 bag の結果一覧 (batch_summary.md と index.html) を書いて表示する"""
+    root.mkdir(parents=True, exist_ok=True)
+    algos = [a for a in ALL_ALGOS if any(r["algo"] == a for b in batch for r in b["results"])]
+    head = "| bag | 状態 | " + " | ".join(NAMES[a] for a in algos) + " | 警告 |"
+    lines = ["# bag2html まとめ (%d 本、%d 分)" % (len(batch), round(elapsed / 60)), "", head,
+             "|" + " --- |" * (len(algos) + 3)]
+    for b in batch:
+        res = {r["algo"]: r["status"] for r in b["results"]}
+        cells = [res.get(a, "未実行" if a in b.get("skip", {}) else "—") for a in algos]
+        state = b["status"] if not b.get("error") else "エラー: " + b["error"]
+        lines.append("| %s | %s | %s | %d 件 |" % (b["bag"], state, " | ".join(cells), len(b["warnings"])))
+    warn_lines = []
+    for b in batch:
+        for w in b["warnings"]:
+            warn_lines.append("- %s: %s" % (b["bag"], w))
+    if warn_lines:
+        lines += ["", "警告:"] + warn_lines
+    (root / "batch_summary.md").write_text("\n".join(lines) + "\n")
+
+    # report.html へのリンク集
+    import html as _html
+    rows = []
+    for b in batch:
+        rel = None
+        if b.get("report"):
+            rel = Path(b["report"]).relative_to(root).as_posix()
+        elif (b["out"] / "report.html").exists():
+            rel = (b["out"] / "report.html").relative_to(root).as_posix()
+        res = ", ".join("%s: %s" % (NAMES[r["algo"]], r["status"]) for r in b["results"]) or (b.get("error") or b["status"])
+        link = '<a href="%s">%s</a>' % (_html.escape(rel), _html.escape(b["bag"])) if rel else _html.escape(b["bag"])
+        rows.append("<tr><td>%s</td><td>%s</td><td>%s</td></tr>" % (
+            link, _html.escape(res), "<br>".join(_html.escape(w) for w in b["warnings"])))
+    (root / "index.html").write_text(
+        "<!doctype html><html lang=\"ja\"><head><meta charset=\"utf-8\"><title>bag2html まとめ</title>"
+        "<style>body{font-family:system-ui,sans-serif;margin:24px}table{border-collapse:collapse}"
+        "td,th{border:1px solid #ccc;padding:6px 10px;vertical-align:top;font-size:14px}</style></head><body>"
+        "<h1>bag2html まとめ (%d 本)</h1><table><tr><th>bag (クリックでビューア)</th><th>結果</th><th>警告</th></tr>%s"
+        "</table></body></html>\n" % (len(batch), "".join(rows)))
+    print()
+    print("\n".join(lines))
+    print()
+    log("全 bag の処理が終わりました。一覧: %s" % (root / "index.html"))
 
 
 if __name__ == "__main__":
