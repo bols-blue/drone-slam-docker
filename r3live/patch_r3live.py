@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """R3LIVE (hku-mars/r3live) を Docker 内で bag リプレイ + Mid-360S 用に使うためのソースパッチ。
 
-1. LiDAR front end: Avia 前提の「x > 0.7 m の点だけ使う」制限を距離 (blind) 判定に変更 (360°の Mid-360S 対応)
+1. LiDAR front end: Avia 前提の「x > 0.7 m の点だけ使う」制限を距離 (blind) 判定に変更 (360°の Mid-360S 対応)。
+   ライン 0 に点が無いとスキャンを捨てる判定を全ライン合計に変更し、全点 blind 内のラインで落ちないようにする (XT16)
 2. LiDAR-IMU 並進 (Lidar_offset_to_IMU, Avia 固定値) を ROS パラメータ /r3live_lio/lidar_offset_to_imu で指定可能に
 3. IMU 加速度の g -> m/s^2 変換を /r3live_lio/acc_mul_G で有効化 (Mid-360S の内蔵IMUは g 単位)
 4. IMU 初期化時に重力方向へ姿勢を合わせる (/r3live_lio/gravity_align。元実装は初期姿勢=単位行列固定)
@@ -35,6 +36,36 @@ patch("src/loam/LiDAR_front_end.cpp",
       "if ( ( msg->points[ i ].x > 2.0 )",
       "if ( ( ( msg->points[ i ].x * msg->points[ i ].x + msg->points[ i ].y * msg->points[ i ].y"
       " + msg->points[ i ].z * msg->points[ i ].z ) > 4.0 )")
+# 1b. ライン 0 に点が無いとスキャン全体を捨てる判定を、全ラインの合計に変更。
+#     回転式 LiDAR (XT16 を tools で Livox 形式にしたもの) は、機体に隠れるラインが全点 blind 内になることがある
+patch("src/loam/LiDAR_front_end.cpp",
+      """    if ( pl_buff[ 0 ].size() <= 7 )
+    {
+        return;
+    }""",
+      """    size_t n_valid_pts = 0;
+    for ( int j = 0; j < N_SCANS; j++ )
+    {
+        n_valid_pts += pl_buff[ j ].size();
+    }
+    if ( n_valid_pts <= 7 )
+    {
+        return;
+    }""")
+# 1c. 1 ライン全点が blind 内のとき give_feature が配列の外を読む不具合を防ぐ
+patch("src/loam/LiDAR_front_end.cpp",
+      """    while ( types[ head ].range < blind )
+    {
+        head++;
+    }""",
+      """    while ( head < plsize && types[ head ].range < blind )
+    {
+        head++;
+    }
+    if ( head >= plsize )
+    {
+        return;
+    }""")
 
 # 2. LiDAR-IMU offset
 patch("src/loam/include/common_lib.h",

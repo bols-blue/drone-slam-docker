@@ -91,8 +91,9 @@ def main():
         # --- Livox (Mid-360S: 非反復走査・4ライン / Avia: 6ライン) ---
         "sensor": "livox",
         "N_SCAN": int(lidar.get("scan_lines", 4)),
-        # 1ライン・1フレームあたりの最大点数 (200k pts/s / 10Hz / 4 lines = 5000) より大きくする
-        "Horizon_SCAN": 6000,
+        # 1ライン・1フレームあたりの最大点数より大きくする
+        # (Mid-360S: 200k pts/s / 10Hz / 4 lines = 5000、XT16 デュアルリターン: 64000 / 16 = 4000)
+        "Horizon_SCAN": int(lidar.get("horizon_scan", 6000)),
         "timeField": "time",
         "downsampleRate": 1,
         "lidarMinRange": float(lidar.get("blind", 0.5)),

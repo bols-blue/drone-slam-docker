@@ -1,0 +1,62 @@
+# ============================================================================
+# Hesai XT16 + ArduPilot (FC の IMU) + カメラ 構成用の共通センサ設定 (テンプレート)
+#   common/config/calib.yaml (Mid-360S 用) と同じ形式。値は仮値なので実機の値に置き換えること。
+#   XT16 の点群 (/lidar_points) は tools (ROS2 -> ROS1 変換) が Livox 形式 (/lidar_points/livox) に変換する。
+# ============================================================================
+
+topics:
+  lidar: /lidar_points/livox   # tools が /lidar_points (Hesai の PointCloud2) から作る livox_ros_driver/CustomMsg
+  imu: /mavros/imu/data_raw    # XT16 は IMU を内蔵しないため FC (ArduPilot) の IMU。100 Hz 以上必要 (RAW_IMU を上げる)
+  image: /image_raw            # sensor_msgs/Image (tools で /image_raw/compressed から変換)
+  fc_imu: /mavros/imu/data     # 姿勢付き (LVI-SAM のみ。ATTITUDE も 100 Hz 以上に上げた場合)
+
+lidar:
+  model: xt16
+  scan_lines: 16
+  blind: 1.0                   # [m] 機体・プロペラが写る距離に合わせる
+  det_range: 80.0              # [m] XT16 の測距範囲
+  horizon_scan: 6000           # (LVI-SAM) 1 ライン・1 フレームあたりの最大点数より大きく
+
+imu:
+  acc_in_g: false              # MAVROS は m/s^2 で出す
+  acc_noise: 0.1
+  gyr_noise: 0.1
+  acc_bias_noise: 0.0001
+  gyr_bias_noise: 0.0001
+
+# LiDAR 点を IMU (FC の base_link: x 前 / y 左 / z 上) 座標系へ写す変換: p_imu = R * p_lidar + t
+# 仮値: XT16 の座標軸が base_link と同じ向き、同じ位置とした場合。
+# TODO: 機体図面や実測で、FC から見た XT16 の位置 [m] と向きを入れる (docs は drone_slam の calibration.md)。
+#       回転が大きく違うと SLAM は発散する。
+#       XT16 を機体の下に天地逆に吊るしている場合は R を [1, 0, 0, 0, -1, 0, 0, 0, -1] にする
+#       (2026-10-14 の試験記録ではライン番号と点の高さから天地逆と判定された。bag2html も判定して警告する)。
+T_imu_lidar:
+  R: [1, 0, 0,
+      0, 1, 0,
+      0, 0, 1]
+  t: [0.0, 0.0, 0.0]
+
+camera:
+  width: 1280
+  height: 720
+  fx: 900.0
+  fy: 900.0
+  cx: 640.0
+  cy: 360.0
+  distortion: [0.0, 0.0, 0.0, 0.0, 0.0]
+  fps: 10
+  time_offset: 0.0
+
+# LiDAR 点をカメラ座標系 (x 右 / y 下 / z 光軸) へ写す変換: p_cam = R * p_lidar + t (仮値: カメラは LiDAR の前方を向く)
+T_cam_lidar:
+  R: [0, -1,  0,
+      0,  0, -1,
+      1,  0,  0]
+  t: [0.0, 0.0, 0.0]
+
+# (LVI-SAM のみ) FC の姿勢付き IMU と LiDAR。XT16 構成では T_imu_lidar と同じ FC なので同じ値にする
+T_fcimu_lidar:
+  R: [1, 0, 0,
+      0, 1, 0,
+      0, 0, 1]
+  t: [0.0, 0.0, 0.0]

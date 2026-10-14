@@ -46,8 +46,8 @@ def main():
             "gravity_acc": [0.0, 0.0, 9.81],
         },
         "lidar_parameter": {
-            "lidar_type": 1,  # 1: Livox CustomMsg
-            "N_SCANS": 4,     # Mid-360S は 4 ライン
+            "lidar_type": 1,  # 1: Livox CustomMsg (XT16 も tools で CustomMsg に変換して入力する)
+            "N_SCANS": int(lidar.get("scan_lines", 4)),  # Mid-360S は 4、XT16 は 16
             "SCAN_RATE": 10,
             "time_unit": 3,
             "blind": float(lidar.get("blind", 0.5)),

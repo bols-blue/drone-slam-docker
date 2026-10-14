@@ -75,6 +75,22 @@ drone-slam-bag2html ~/drone_slam_bags/raw_20260925_004138 --calib ./my_calib.yam
 
 LiDAR を天地逆に取り付けた場合は `T_cam_lidar` / `T_fcimu_lidar` の回転にその向きを含めます (`T_imu_lidar` は LiDAR 内部の関係なので変わりません)。重力の向きは各手法が起動時に IMU から合わせますが、FAST-LIO2 は世界座標が起動時の IMU の向きのままなので、地図が上下逆さまに出ます (`bag2html.py` は表示時に自動で反転します)。
 
+## Hesai XT16 で使う
+
+XT16 は IMU を内蔵しないため、FC (ArduPilot) の IMU (`/mavros/imu/data_raw`) と組み合わせます。テンプレートは [`common/config/calib_xt16.yaml`](common/config/calib_xt16.yaml) です。
+
+```bash
+cp ~/.local/share/drone-slam-docker/common/config/calib_xt16.yaml ./my_calib_xt16.yaml   # FC と XT16 の位置関係を書き換える
+drone-slam-bag2html <XT16 の bag> --calib ./my_calib_xt16.yaml
+```
+
+- **点群の変換**: `tools` が Hesai の点群 (`/lidar_points`、x y z intensity ring timestamp) を自動で検出し、Livox 形式 (`/lidar_points/livox`) に変換します。5 手法とも Livox 形式を共通に読めるためです (R3LIVE は Velodyne 形式の入力が未実装)
+- **時刻**: XT16 の時刻を記録時刻と比べて自動で扱いを決めます (`--lidar-time-align`)。PTP で同期済みならそのまま、一定のずれなら一律に補正、時計の進み方がずれていれば (PTP が Locked になっていない等) 記録時刻を基準に付け直します。PTP の設定は drone_slam の `docs/time_sync.md`
+- **IMU**: 100 Hz 以上必要です (ArduPilot は RAW_IMU の送信レートを上げる)。50 Hz 未満の bag は理由を表示して止めます。起動直後に MAVROS が出す単位換算前の値 (mg) は外れ値として除きます (`--imu-outlier-ratio`)
+- **取り付けの向き**: `T_imu_lidar` は FC の機体座標 (x 前 / y 左 / z 上) から見た XT16 の向きと位置です。`bag2html.py` は XT16 のライン番号と点の高さから天地逆の取り付けを判定し、`T_imu_lidar` と合っていなければ警告します (天地逆なら R = `[1, 0, 0, 0, -1, 0, 0, 0, -1]`)
+- **LVI-SAM**: 姿勢付きの `/mavros/imu/data` も 100 Hz 以上必要です (ArduPilot は ATTITUDE を上げる)。足りなければ自動で省きます
+- 2026-10-14 の試験記録 (静止 26 秒) では、FAST-LIVO2 / FAST-LIO2 / R3LIVE が静止を正しく推定しました (始点からのずれ 0〜3 cm)。SR-LIVO はカメラの外部パラメータが仮値のままでは発散するので、カメラのキャリブレーション後に評価してください
+
 ## 個別に実行する
 
 ```bash
@@ -90,7 +106,7 @@ docker run --rm -v ~/bags:/data:ro -v $PWD/my_calib.yaml:/config/calib.yaml:ro -
 ```
 
 - 各イメージの ENTRYPOINT (`slam-replay`) のオプション: `--rate` `--start` `--duration` `--tail` (再生後の待ち秒数) `--rviz` (X11 が必要) `--no-record`
-- `tools` の主なオプション: `--imu-ms2-copy <topic>` (g 単位の IMU を m/s² に換算した `<topic>_ms2` を追加。LVI-SAM に内蔵 IMU を入れる場合)、`--livox-time-align` (PTP 同期していない Mid-360S の時刻を補正。既定は自動判定)、`--image-every N` (画像の間引き)
+- `tools` の主なオプション: `--imu-ms2-copy <topic>` (g 単位の IMU を m/s² に換算した `<topic>_ms2` を追加。LVI-SAM に内蔵 IMU を入れる場合。既に m/s² なら作らない)、`--livox-time-align` (PTP 同期していない Mid-360S の時刻を補正。既定は自動判定)、`--hesai-topics` / `--keep-hesai-source` / `--lidar-time-align` (Hesai 点群の Livox 形式への変換と時刻の扱い)、`--imu-outlier-ratio` (IMU の外れ値除去)、`--image-every N` (画像の間引き)
 - 点群・メッシュは CloudCompare や MeshLab でも開けます
 
 ## 比較ビューア
@@ -135,6 +151,8 @@ ROS2 bag をループ再生しながら、RViz2 の 3D ビューに LiDAR 点群
 |---|---|---|
 | `/livox/lidar` | `livox_ros_driver2/CustomMsg` (`xfer_format: 1`) | 全手法。点ごとの時刻が必要なので PointCloud2 ではなく CustomMsg で記録する |
 | `/livox/imu` | `sensor_msgs/Imu` | 全手法 (LVI-SAM は FC の IMU が無い場合のみ) |
+| `/lidar_points` (XT16) | `sensor_msgs/PointCloud2` (x y z intensity ring timestamp) | XT16 構成の全手法 (tools が Livox 形式に変換)。記録時に 0 件になっていないか `ros2 bag info` で確認する |
+| `/mavros/imu/data_raw` (XT16) | `sensor_msgs/Imu` | XT16 構成の全手法。100 Hz 以上 (ArduPilot の RAW_IMU) |
 | `/image_raw` (または `/image_raw/compressed`) | `Image` / `CompressedImage` | 色付け・テクスチャ。10 Hz 以上を推奨 |
 | `/mavros/imu/data` | `sensor_msgs/Imu` | LVI-SAM (姿勢付き 9 軸 IMU、100 Hz 以上) |
 

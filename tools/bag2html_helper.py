@@ -51,20 +51,65 @@ def probe(args):
     warnings = []
     notes = []
 
+    duration = max(bag.get_end_time() - bag.get_start_time(), 1e-3)
     lidar = topics_cfg.get("lidar", "/livox/lidar")
     imu = topics_cfg.get("imu", "/livox/imu")
-    if lidar not in types:
-        cands = [t for t, ty in types.items() if ty == "livox_ros_driver/CustomMsg"]
+    if counts.get(lidar, 0) == 0:
+        # Livox (Mid-360S) の /livox/lidar、または tools が Hesai (XT16) から作った <topic>/livox
+        cands = sorted((t for t, ty in types.items() if ty == "livox_ros_driver/CustomMsg" and counts[t] > 0),
+                       key=lambda t: -counts[t])
         if not cands:
-            sys.exit("[probe] LiDAR トピック %s (livox_ros_driver/CustomMsg) が bag にありません" % lidar)
-        warnings.append("LiDAR トピック %s が無いので %s を使います" % (lidar, cands[0]))
+            empty = [t for t, ty in types.items()
+                     if ty in ("livox_ros_driver/CustomMsg", "sensor_msgs/PointCloud2") and counts[t] == 0]
+            if empty:
+                sys.exit("[probe] LiDAR のデータが記録されていません (%s が 0 件)。記録時に LiDAR ドライバが"
+                         "動いていたか確認してください" % ", ".join(empty))
+            others = [t for t, ty in types.items() if ty == "sensor_msgs/PointCloud2"]
+            sys.exit("[probe] LiDAR トピック %s が bag にありません%s" % (
+                lidar, " (PointCloud2: %s。Hesai 形式 (x y z intensity ring timestamp) なら tools が自動で "
+                       "<topic>/livox に変換します)" % ", ".join(others) if others else ""))
+        if lidar in types:
+            warnings.append("LiDAR トピック %s は 0 件なので %s を使います" % (lidar, cands[0]))
+        else:
+            warnings.append("LiDAR トピック %s が無いので %s を使います" % (lidar, cands[0]))
         lidar = topics_cfg["lidar"] = cands[0]
-    if imu not in types:
-        cands = [t for t, ty in types.items() if ty == "sensor_msgs/Imu" and not t.endswith("_ms2") and "mavros" not in t]
+    if counts.get(imu, 0) == 0:
+        cands = sorted((t for t, ty in types.items() if ty == "sensor_msgs/Imu" and not t.endswith("_ms2")
+                        and counts[t] > 0), key=lambda t: -counts[t])
         if not cands:
             sys.exit("[probe] IMU トピック %s が bag にありません" % imu)
         warnings.append("IMU トピック %s が無いので %s を使います" % (imu, cands[0]))
         imu = topics_cfg["imu"] = cands[0]
+    imu_hz = counts[imu] / duration
+    if imu_hz < 50:
+        sys.exit("[probe] IMU %s が %.1f Hz しかありません。SLAM には 100 Hz 以上必要です"
+                 " (ArduPilot なら RAW_IMU の送信レートを上げる。drone_slam の docs/time_sync.md 参照)" % (imu, imu_hz))
+    notes.append("LiDAR %s %.1f Hz / IMU %s %.1f Hz" % (lidar, counts[lidar] / duration, imu, imu_hz))
+
+    # 回転式 LiDAR (XT16 等、16 ライン以上) はライン番号が大きいほど上向きのレーザー。
+    # ライン番号と点の高さが逆相関なら LiDAR が天地逆に付いている
+    lidar_inverted = None
+    if int((base.get("lidar") or {}).get("scan_lines", 4)) >= 16:
+        mid = counts[lidar] // 2
+        for k, (_, m, _) in enumerate(bag.read_messages(topics=[lidar])):
+            if k < mid:
+                continue
+            pts = np.array([(p.z, p.line, p.x * p.x + p.y * p.y + p.z * p.z) for p in m.points])
+            pts = pts[pts[:, 2] > 1.0]
+            if len(pts) > 100:
+                lines = np.unique(pts[:, 1])
+                mean_z = [pts[pts[:, 1] == ln, 0].mean() for ln in lines]
+                if len(lines) >= 4:
+                    lidar_inverted = bool(np.corrcoef(lines, mean_z)[0, 1] < 0)
+            break
+        if lidar_inverted:
+            T = np.array((base.get("T_imu_lidar") or {}).get("R", [1, 0, 0, 0, 1, 0, 0, 0, 1]), dtype=float).reshape(3, 3)
+            msg = "LiDAR が天地逆に取り付けられていると判定しました (ライン番号が大きいほど点が低い)"
+            if T[2, 2] > 0:
+                warnings.append(msg + "。calib.yaml の T_imu_lidar の回転が天地逆になっていません (例: R = diag(1, -1, -1))。"
+                                "回転が違うと SLAM は発散します")
+            else:
+                notes.append(msg)
 
     # 画像
     image = topics_cfg.get("image", "/image_raw")
@@ -92,7 +137,9 @@ def probe(args):
             notes.append("IMU の z 軸が下向き (LiDAR が天地逆に取り付けられている) と判定しました")
 
     fc_imu = topics_cfg.get("fc_imu", "/mavros/imu/data")
-    has_fc_imu = fc_imu in types and fc_imu != imu
+    fc_hz = counts.get(fc_imu, 0) / duration
+    has_fc_imu = fc_imu in types and fc_imu != imu and fc_hz >= 50
+    fc_slow = fc_imu in types and fc_imu != imu and 0 < fc_hz < 50
     has_ms2 = (imu + "_ms2") in types
 
     main = copy.deepcopy(base)
@@ -116,6 +163,9 @@ def probe(args):
         deep_set(lvi, ["imu", "acc_in_g"], False)
     elif has_ms2 and inverted:
         skip["lvi-sam"] = "FC の IMU (%s) が bag に無く、内蔵 6 軸 IMU が天地逆のため発散する" % fc_imu
+    elif fc_slow:
+        skip["lvi-sam"] = "姿勢付き IMU (%s) が %.1f Hz しかない (100 Hz 以上必要。ArduPilot なら ATTITUDE を上げる)" % (
+            fc_imu, fc_hz)
     else:
         skip["lvi-sam"] = "姿勢付き IMU (%s) が bag に無い" % fc_imu
 
