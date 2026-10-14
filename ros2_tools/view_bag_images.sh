@@ -14,12 +14,12 @@
 #   --xt16-tf  "x y z roll pitch yaw"   base_link から見た XT16 (hesai_lidar) (既定 "0 0 0 0 0 0")
 #   --decay SEC          Mid-360S の点群を残す秒数 (既定 0.5)
 #
-# Livox の CustomMsg は drone_slam_bringup の livox_custommsg_to_pointcloud2_node で PointCloud2 に変換して表示する。
+# Livox の CustomMsg は livox_to_pointcloud2.py で PointCloud2 に変換して表示する。
 # usb_cam yuyv の圧縮画像は format に yuv422_yuy2 が付き RViz2 では展開できないため、compressed_relay.py で bgr8 にする。
 # LiDAR は bag に入っている方 (Mid-360S の CustomMsg か XT16 などの PointCloud2) を自動で選んで表示する。
 # bag はループ再生する。終了は RViz2 のウィンドウを閉じるか Ctrl+C。
 set -euo pipefail
-IMAGE="${DRONE_SLAM_ROS2_IMAGE:-drone_slam:latest}"   # rviz2 + image_transport_plugins + python3-opencv + drone_slam_bringup を含む ROS2 Jazzy イメージ
+IMAGE="${DRONE_SLAM_ROS2_IMAGE:-ghcr.io/bols-blue/drone-slam:ros2-viewer}"   # rviz2 + image_transport_plugins + python3-opencv + livox_ros_driver2 メッセージを含む ROS2 Jazzy イメージ
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
 [[ $# -ge 1 ]] || { sed -n '2,20p' "$0"; exit 1; }
@@ -65,7 +65,7 @@ if [[ -n "$IMG_TOPIC" ]]; then
 fi
 tf_args() { read -r x y z r p yw <<<"$1"; echo "--x $x --y $y --z $z --roll $r --pitch $p --yaw $yw"; }
 if [[ -n "$LIVOX_TOPIC" ]]; then
-  NODES+="ros2 run drone_slam_bringup livox_custommsg_to_pointcloud2_node --ros-args -p input_topic:=$LIVOX_TOPIC -p output_topic:=/bag_view/livox_points > /tmp/livox.log 2>&1 &"$'\n'
+  NODES+="python3 /tools/livox_to_pointcloud2.py $LIVOX_TOPIC /bag_view/livox_points > /tmp/livox.log 2>&1 &"$'\n'
   NODES+="ros2 run tf2_ros static_transform_publisher $(tf_args "$LIVOX_TF") --frame-id base_link --child-frame-id livox_frame > /dev/null 2>&1 &"$'\n'
   RVIZ_ARGS+=" --livox /bag_view/livox_points"
 fi
@@ -94,7 +94,7 @@ docker run --rm --init --network none "${TTY[@]}" \
     trap 'kill \$(jobs -p) 2>/dev/null; exit 0' INT TERM
     trap 'kill \$(jobs -p) 2>/dev/null' EXIT
     source /opt/ros/jazzy/setup.bash
-    [[ -f /drone_slam/ros2_ws/install/setup.bash ]] && source /drone_slam/ros2_ws/install/setup.bash
+    for ws in /opt/viewer_ws/install /drone_slam/ros2_ws/install; do [[ -f \$ws/setup.bash ]] && source \$ws/setup.bash; done
     python3 /tools/make_rviz.py $RVIZ_ARGS > /tmp/view.rviz
     $NODES
     ros2 bag play /bag --loop --rate $RATE > /tmp/play.log 2>&1 &

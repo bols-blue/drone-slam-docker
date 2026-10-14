@@ -1,0 +1,10 @@
+# ビルドに不要な大きいファイル (bag、出力、ビューア用データ) を Docker に送らない
+output/
+data/
+configs/
+viewer/data/
+**/*.bag
+**/*.mcap
+**/*.db3
+**/__pycache__/
+.git/

@@ -35,6 +35,7 @@ jobs:
           - { tag: r3live,            dockerfile: r3live/Dockerfile }
           - { tag: sr-livo,           dockerfile: sr_livo/Dockerfile }
           - { tag: lvi-sam,           dockerfile: lvi_sam/Dockerfile }
+          - { tag: ros2-viewer,       dockerfile: ros2_tools/Dockerfile }
     steps:
       - name: Skip if not selected
         id: sel

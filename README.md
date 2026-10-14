@@ -6,14 +6,30 @@
 - 比較ビューア (公開版): <https://bols-blue.github.io/drone-slam-docker/>
 - イメージ: `ghcr.io/bols-blue/drone-slam:<タグ>` (認証なしで pull できます)
 
-## クイックスタート
+## インストール
 
-Docker と Python 3.8 以上があれば、bag のフォルダを渡すだけで比較ビューアまで作れます。
+Linux で Docker (sudo なしで実行できること) と Python 3.8 以上が使える環境が前提です。
 
 ```bash
-git clone https://github.com/bols-blue/drone-slam-docker.git && cd drone-slam-docker
-cp common/config/calib.yaml ./my_calib.yaml     # 実機の値に書き換える (後述)
-python3 bag2html.py ~/drone_slam_bags/raw_20260925_004138 --calib ./my_calib.yaml
+curl -fsSL https://raw.githubusercontent.com/bols-blue/drone-slam-docker/main/install.sh | bash
+```
+
+リポジトリを `~/.local/share/drone-slam-docker` に取得し、`~/.local/bin` に次のコマンドを置きます (clone 済みなら `./install.sh` でも可)。Docker イメージは初回実行時に必要な分だけ自動で取得されます (`--pull` で全部を先に取得。合計 約 25 GB)。
+
+| コマンド | 内容 |
+|---|---|
+| `drone-slam-bag2html <bag> --calib my_calib.yaml` | bag から比較ビューア (`./output/<bag名>/report.html`) まで一括で作る |
+| `drone-slam-view <bag>` | bag のカメラ画像と LiDAR 点群 (Mid-360S / XT16) を RViz2 で見る |
+| `drone-slam-run <手法\|all> <bag> --calib my_calib.yaml` | 手法を指定して bag をリプレイする |
+| `drone-slam-update` | リポジトリと取得済みイメージを最新にする |
+
+アンインストールは `install.sh --uninstall` です (コマンドだけを削除します)。
+
+## クイックスタート
+
+```bash
+cp ~/.local/share/drone-slam-docker/common/config/calib.yaml ./my_calib.yaml   # 実機の値に書き換える (後述)
+drone-slam-bag2html ~/drone_slam_bags/raw_20260925_004138 --calib ./my_calib.yaml
 # → ./output/raw_20260925_004138/report.html をブラウザで開く
 ```
 
@@ -36,6 +52,7 @@ python3 bag2html.py ~/drone_slam_bags/raw_20260925_004138 --calib ./my_calib.yam
 | `lvi-sam` | [LVI-SAM](https://github.com/TixiaoShan/LVI-SAM) ([Easyused 版](https://github.com/Cc19245/LVI-SAM-Easyused)) | ① LIV 因子グラフ (ループ閉じ込みあり) | Melodic | 点群 (色なし)、軌跡 | 動く (姿勢付き 9 軸 IMU が必須) |
 | `fast-lio2-openmvs` | [FAST-LIO2](https://github.com/hku-mars/FAST_LIO) + [OpenMVS](https://github.com/cdcseacave/openMVS) | ② LIO + 後処理テクスチャ | Noetic | 点群、メッシュ、テクスチャ付きメッシュ、色付き点群 | 点群と軌跡まで (テクスチャ付けは画像が必要) |
 | `tools` | ROS2 bag → ROS1 bag 変換 | — | Python | ROS1 bag | — |
+| `ros2-viewer` | RViz2 での bag 表示 (`drone-slam-view`) | — | Jazzy | — | — |
 
 各手法の出力ファイル、チューニング項目、注意点は各ディレクトリ (`fast_livo2/` `r3live/` `sr_livo/` `lvi_sam/` `fast_lio2_openmvs/`) の README にあります。
 
@@ -105,10 +122,10 @@ ros2_tools/view_bag_images.sh <bag> --rate 0.5 --xt16-tf "0 0 -0.1 0 0 0"
 
 ROS2 bag をループ再生しながら、RViz2 の 3D ビューに LiDAR 点群 (反射強度で着色) を、左のパネルにカメラ画像を表示します。終了はウィンドウを閉じるか Ctrl+C です。
 
-- LiDAR は bag に入っている方を自動で選びます。Mid-360S (`livox_ros_driver2/CustomMsg`) は `drone_slam_bringup` の `livox_custommsg_to_pointcloud2_node` で PointCloud2 に変換し、XT16 は `/lidar_points` (無ければ最初の PointCloud2) をそのまま表示します。`--cloud <topic>` で表示する点群を追加できます
+- LiDAR は bag に入っている方を自動で選びます。Mid-360S (`livox_ros_driver2/CustomMsg`) は `livox_to_pointcloud2.py` で PointCloud2 に変換し、XT16 は `/lidar_points` (無ければ最初の PointCloud2) をそのまま表示します。`--cloud <topic>` で表示する点群を追加できます
 - 表示の基準は `base_link` です。`--livox-tf` / `--xt16-tf` に `"x y z roll pitch yaw"` (m, rad) で LiDAR の取り付けを渡します (既定: Mid-360S は天地逆 `"0 0 0 3.14159 0 0"`、XT16 は `"0 0 0 0 0 0"`)
 - その他のオプション: `--image <topic>` `--rate <倍速>` `--decay <秒>` (Mid-360S の点群を残す時間。既定 0.5)
-- 必要なもの: rviz2・image_transport_plugins・python3-opencv・`drone_slam_bringup` を含む ROS2 Jazzy イメージ (既定は記録用の `drone_slam:latest`、`DRONE_SLAM_ROS2_IMAGE` で変更可) と X11 ディスプレイ
+- 必要なもの: X11 ディスプレイ (Wayland でも XWayland があれば可)。表示には `ghcr.io/bols-blue/drone-slam:ros2-viewer` (RViz2・image_transport_plugins・livox_ros_driver2 メッセージ入りの ROS2 Jazzy イメージ) を使います (`DRONE_SLAM_ROS2_IMAGE` で変更可)
 - コンテナはネットワークから切り離して動かすので、同じ PC で動いている ROS2 (実機の記録など) とは混線しません
 - usb_cam を `pixel_format: yuyv` で使って記録した圧縮画像は format が `yuv422_yuy2; jpeg compressed bgr8` になり、RViz2 の標準の展開では表示できません。`compressed_relay.py` で JPEG を展開し直して表示します
 
@@ -154,7 +171,8 @@ ROS2 bag をループ再生しながら、RViz2 の 3D ビューに LiDAR 点群
 | `tools/` | ROS2 → ROS1 bag 変換 (`tools` イメージ) |
 | `fast_livo2/` `r3live/` `sr_livo/` `lvi_sam/` `fast_lio2_openmvs/` | 手法ごとの Dockerfile、設定生成 (`gen_config.py`)、起動・保存手順 (`profile.sh`)、上流へのパッチ、README |
 | `viewer/` | 比較ビューア (GitHub Pages で公開) と書き出しスクリプト |
-| `ros2_tools/` | ROS2 bag の画像と点群 (Mid-360S / XT16) を RViz2 で見るスクリプト |
+| `ros2_tools/` | ROS2 bag の画像と点群 (Mid-360S / XT16) を RViz2 で見るスクリプトと、その表示用イメージ (`ros2-viewer`) |
+| `install.sh` | インストーラ (コマンドを `~/.local/bin` に置く) |
 | `.github/workflows/` | イメージのビルド・公開 (`build.yml`)、ビューアの公開 (`pages.yml`) |
 
 ## ビルド
