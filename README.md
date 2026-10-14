@@ -95,15 +95,22 @@ python3 -m http.server -d viewer 8000   # http://localhost:8000
 - 公開版 (GitHub Pages) は `viewer/**` を main に push すると [`pages.yml`](.github/workflows/pages.yml) が再公開します。データセットは `viewer/data/<id>/` に置き、`viewer/data/datasets.json` に登録します (`#<id>` で直接開けます)
 - 公開版のうち R3LIVE dataset 由来の地図は元データと同じ CC BY-NC-SA 4.0 (非商用) です
 
-## bag 内の画像を RViz2 で見る
+## bag の画像と点群を RViz2 で見る
 
 ```bash
-ros2_tools/view_bag_images.sh ~/drone_slam_bags/raw_20260928_064026            # 画像トピックは自動で選ぶ
-ros2_tools/view_bag_images.sh ~/drone_slam_bags/raw_20260928_064026 /image_raw/compressed 0.5
+ros2_tools/view_bag_images.sh ~/drone_slam_bags/raw_20260928_064026          # Mid-360S + カメラ
+ros2_tools/view_bag_images.sh ~/claud_code/drone_slam_比較/raw_20261014_014135  # XT16 + カメラ
+ros2_tools/view_bag_images.sh <bag> --rate 0.5 --xt16-tf "0 0 -0.1 0 0 0"
 ```
 
-ROS2 bag をループ再生しながら RViz2 で画像を表示します。rviz2・image_transport_plugins・python3-opencv を含む ROS2 Jazzy イメージ (既定は記録用の `drone_slam:latest`、`DRONE_SLAM_ROS2_IMAGE` で変更可) と X11 ディスプレイが必要です。
-usb_cam を `pixel_format: yuyv` で使って記録した圧縮画像は format が `yuv422_yuy2; jpeg compressed bgr8` になり、RViz2 の標準の展開では表示できません。スクリプトは `compressed_relay.py` で JPEG を展開し直して表示します。
+ROS2 bag をループ再生しながら、RViz2 の 3D ビューに LiDAR 点群 (反射強度で着色) を、左のパネルにカメラ画像を表示します。終了はウィンドウを閉じるか Ctrl+C です。
+
+- LiDAR は bag に入っている方を自動で選びます。Mid-360S (`livox_ros_driver2/CustomMsg`) は `drone_slam_bringup` の `livox_custommsg_to_pointcloud2_node` で PointCloud2 に変換し、XT16 は `/lidar_points` (無ければ最初の PointCloud2) をそのまま表示します。`--cloud <topic>` で表示する点群を追加できます
+- 表示の基準は `base_link` です。`--livox-tf` / `--xt16-tf` に `"x y z roll pitch yaw"` (m, rad) で LiDAR の取り付けを渡します (既定: Mid-360S は天地逆 `"0 0 0 3.14159 0 0"`、XT16 は `"0 0 0 0 0 0"`)
+- その他のオプション: `--image <topic>` `--rate <倍速>` `--decay <秒>` (Mid-360S の点群を残す時間。既定 0.5)
+- 必要なもの: rviz2・image_transport_plugins・python3-opencv・`drone_slam_bringup` を含む ROS2 Jazzy イメージ (既定は記録用の `drone_slam:latest`、`DRONE_SLAM_ROS2_IMAGE` で変更可) と X11 ディスプレイ
+- コンテナはネットワークから切り離して動かすので、同じ PC で動いている ROS2 (実機の記録など) とは混線しません
+- usb_cam を `pixel_format: yuyv` で使って記録した圧縮画像は format が `yuv422_yuy2; jpeg compressed bgr8` になり、RViz2 の標準の展開では表示できません。`compressed_relay.py` で JPEG を展開し直して表示します
 
 ## 記録側で必要なトピック
 
@@ -147,7 +154,7 @@ usb_cam を `pixel_format: yuyv` で使って記録した圧縮画像は format 
 | `tools/` | ROS2 → ROS1 bag 変換 (`tools` イメージ) |
 | `fast_livo2/` `r3live/` `sr_livo/` `lvi_sam/` `fast_lio2_openmvs/` | 手法ごとの Dockerfile、設定生成 (`gen_config.py`)、起動・保存手順 (`profile.sh`)、上流へのパッチ、README |
 | `viewer/` | 比較ビューア (GitHub Pages で公開) と書き出しスクリプト |
-| `ros2_tools/` | ROS2 bag の画像を RViz2 で見るスクリプト |
+| `ros2_tools/` | ROS2 bag の画像と点群 (Mid-360S / XT16) を RViz2 で見るスクリプト |
 | `.github/workflows/` | イメージのビルド・公開 (`build.yml`)、ビューアの公開 (`pages.yml`) |
 
 ## ビルド
