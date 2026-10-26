@@ -3,7 +3,7 @@
 
   make_rviz.py --fixed base_link [--image /bag_view/image] [--livox /bag_view/livox_points] [--cloud /lidar_points ...]
 
-3D ビューに LiDAR 点群 (Mid-360S は反射強度で着色、XT16 などその他の PointCloud2 は単色) と
+3D ビューに LiDAR 点群 (Mid-360S は反射強度で着色、Hesai (XT16 / ATX) などその他の PointCloud2 は単色) と
 base_link の座標軸を、左側のパネルにカメラ画像を表示する。
 """
 import argparse
@@ -52,7 +52,7 @@ def main():
     for i, t in enumerate(a.cloud):
         # LiDAR が 1 台だけなら反射強度で着色、Mid-360S と並べるときは見分けやすいよう単色
         color = CLOUD_COLORS[i % len(CLOUD_COLORS)] if (a.livox or i > 0) else None
-        displays.append(cloud(("XT16 " if "lidar_points" in t or "xt16" in t else "Cloud ") + t, t, 0.0, color))
+        displays.append(cloud(("Hesai " if "lidar_points" in t or "xt16" in t else "Cloud ") + t, t, 0.0, color))
     if a.image:
         displays.append({"Class": "rviz_default_plugins/Image", "Enabled": True, "Name": "Camera",
                          "Normalize Range": True, "Topic": qos(a.image)})

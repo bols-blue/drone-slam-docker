@@ -41,6 +41,10 @@ RUN mkdir -p src \
     && sed -i "s/-march=native/${CPU_ARCH_FLAGS}/g" src/rpg_vikit/vikit_common/CMakeLists.txt src/rpg_vikit/vikit_ros/CMakeLists.txt \
     && sed -i "s/-O3 -march=native -mtune=native -funroll-loops/-O3 ${CPU_ARCH_FLAGS} -funroll-loops/" src/FAST-LIVO2/CMakeLists.txt \
     && grep -rn "march=native" src/ ; true
+# ライン数ごとのバッファが 128 本分の固定長で、128 ラインを超える LiDAR (Hesai ATX など) では範囲外に書き込む。
+# ライン番号は uint8 なので 256 本分にする
+RUN sed -i 's/pl_buff\[128\]/pl_buff[256]/; s/typess\[128\]/typess[256]/' src/FAST-LIVO2/include/preprocess.h \
+    && grep -q "pl_buff\[256\]" src/FAST-LIVO2/include/preprocess.h
 
 COPY common/ros1_ws/src src/common
 RUN . /opt/ros/noetic/setup.sh \

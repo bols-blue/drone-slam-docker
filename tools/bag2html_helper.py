@@ -87,22 +87,31 @@ def probe(args):
                         "する可能性があります (ArduPilot なら RAW_IMU の送信レートを上げる)" % (imu, imu_hz))
     notes.append("LiDAR %s %.1f Hz / IMU %s %.1f Hz" % (lidar, counts[lidar] / duration, imu, imu_hz))
 
+    # 途中の 1 スキャンを読んで、ライン数と取り付けの向きを調べる
+    lidar_cfg = base.get("lidar") or {}
+    scan_lines = int(lidar_cfg.get("scan_lines", 4))
+    mid = counts[lidar] // 2
+    scan = next((m for k, (_, m, _) in enumerate(bag.read_messages(topics=[lidar])) if k >= mid), None)
+    pts = np.array([(p.z, p.line, p.x * p.x + p.y * p.y + p.z * p.z) for p in scan.points]) if scan else np.empty((0, 3))
+    if len(pts):
+        # scan_lines より大きいライン番号の点は、多くの手法が捨てる (ATX はチャンネル数が機種・設定で違う)
+        n_lines = int(pts[:, 1].max()) + 1
+        if n_lines > scan_lines:
+            notes.append("点群のライン数が %d なので lidar.scan_lines を %d から %d に増やします" % (n_lines, scan_lines, n_lines))
+            deep_set(base, ["lidar", "scan_lines"], n_lines)
+            scan_lines = n_lines
+
     # 回転式 LiDAR (XT16 等、16 ライン以上) はライン番号が大きいほど上向きのレーザー。
-    # ライン番号と点の高さが逆相関なら LiDAR が天地逆に付いている
+    # ライン番号と点の高さが逆相関なら LiDAR が天地逆に付いている。
+    # ATX はライン番号と上下の向きの関係を確かめていないので判定しない
     lidar_inverted = None
-    if int((base.get("lidar") or {}).get("scan_lines", 4)) >= 16:
-        mid = counts[lidar] // 2
-        for k, (_, m, _) in enumerate(bag.read_messages(topics=[lidar])):
-            if k < mid:
-                continue
-            pts = np.array([(p.z, p.line, p.x * p.x + p.y * p.y + p.z * p.z) for p in m.points])
-            pts = pts[pts[:, 2] > 1.0]
-            if len(pts) > 100:
-                lines = np.unique(pts[:, 1])
-                mean_z = [pts[pts[:, 1] == ln, 0].mean() for ln in lines]
-                if len(lines) >= 4:
-                    lidar_inverted = bool(np.corrcoef(lines, mean_z)[0, 1] < 0)
-            break
+    if scan_lines >= 16 and lidar_cfg.get("model") != "atx":
+        pts = pts[pts[:, 2] > 1.0]
+        if len(pts) > 100:
+            lines = np.unique(pts[:, 1])
+            mean_z = [pts[pts[:, 1] == ln, 0].mean() for ln in lines]
+            if len(lines) >= 4:
+                lidar_inverted = bool(np.corrcoef(lines, mean_z)[0, 1] < 0)
         if lidar_inverted:
             T = np.array((base.get("T_imu_lidar") or {}).get("R", [1, 0, 0, 0, 1, 0, 0, 0, 1]), dtype=float).reshape(3, 3)
             msg = "LiDAR が天地逆に取り付けられていると判定しました (ライン番号が大きいほど点が低い)"

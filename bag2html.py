@@ -314,6 +314,11 @@ def process_bag(args, src, out, pulled):
     counts = ros2_topic_counts(src) if not (src.is_file() and src.suffix == ".bag") else None
     if counts:
         lidar_topics = {t: n for t, (ty, n) in counts.items() if ty in LIDAR_TYPES}
+        packets = [t for t, (ty, n) in counts.items() if ty == "hesai_ros_driver/msg/UdpFrame" and n > 0]
+        if packets and not any(n for n in lidar_topics.values()):
+            raise RuntimeError("[probe] LiDAR が UDP パケット (%s) でしか記録されていません。パケットから点群を作り直す処理は"
+                               "まだ未対応です (drone_slam の record_lidar_packets:=false で /lidar_points を記録してください)"
+                               % ", ".join(packets))
         if lidar_topics and all(n == 0 for n in lidar_topics.values()):
             raise RuntimeError("[probe] LiDAR のデータが記録されていません (%s が 0 件)。記録時に LiDAR ドライバが"
                                "動いていたか確認してください" % ", ".join(sorted(lidar_topics)))

@@ -69,6 +69,10 @@ COPY common/ros1_ws/src src/common
 RUN git clone https://github.com/hku-mars/FAST_LIO.git src/FAST_LIO \
     && git -C src/FAST_LIO checkout ${FAST_LIO_SHA} \
     && git -C src/FAST_LIO submodule update --init --recursive \
+    # ライン数ごとのバッファが 128 本分の固定長で、128 ラインを超える LiDAR (Hesai ATX など) では範囲外に書き込む。
+    # ライン番号は uint8 なので 256 本分にする
+    && sed -i 's/pl_buff\[128\]/pl_buff[256]/; s/typess\[128\]/typess[256]/' src/FAST_LIO/src/preprocess.h \
+    && grep -q "pl_buff\[256\]" src/FAST_LIO/src/preprocess.h \
     && . /opt/ros/noetic/setup.sh \
     && catkin_make -DCMAKE_BUILD_TYPE=Release -j${MAKE_JOBS} \
     && rm -rf build \

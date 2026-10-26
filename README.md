@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/bols-blue/drone-slam-docker/main/in
 | コマンド | 内容 |
 |---|---|
 | `drone-slam-bag2html <bag> --calib my_calib.yaml` | bag から比較ビューア (`./output/<bag名>/report.html`) まで一括で作る |
-| `drone-slam-view <bag>` | bag のカメラ画像と LiDAR 点群 (Mid-360S / XT16) を RViz2 で見る |
+| `drone-slam-view <bag>` | bag のカメラ画像と LiDAR 点群 (Mid-360S / XT16 / ATX) を RViz2 で見る |
 | `drone-slam-run <手法\|all> <bag> --calib my_calib.yaml` | 手法を指定して bag をリプレイする |
 | `drone-slam-update` | リポジトリと取得済みイメージを最新にする |
 
@@ -100,7 +100,20 @@ drone-slam-bag2html <XT16 の bag> --calib ./my_calib_xt16.yaml
 - **LVI-SAM**: 姿勢付きの `/mavros/imu/data` も 100 Hz 以上必要です (ArduPilot は ATTITUDE を上げる)。足りなければ自動で省きます
 - 2026-10-14 の試験記録 (静止 26 秒) では、FAST-LIVO2 / FAST-LIO2 / R3LIVE が静止を正しく推定しました (始点からのずれ 0〜3 cm)。SR-LIVO はカメラの外部パラメータが仮値のままでは発散するので、カメラのキャリブレーション後に評価してください
 
-## 個別に実行する
+## Hesai ATX で使う
+
+ATX も XT16 と同じ hesai_ros_driver の点群 (`/lidar_points`、x y z intensity ring timestamp) なので、変換と処理は XT16 と同じです。IMU は FC (ArduPilot) のものを使います。テンプレートは [`common/config/calib_atx.yaml`](common/config/calib_atx.yaml) です。
+
+```bash
+cp ~/.local/share/drone-slam-docker/common/config/calib_atx.yaml ./my_calib_atx.yaml   # FC と ATX の位置関係を書き換える
+drone-slam-bag2html <ATX の bag> --calib ./my_calib_atx.yaml
+```
+
+- **ライン数**: ATX はチャンネル数が機種・設定で違います。`bag2html.py` は点群のライン番号から実際のライン数を調べ、`lidar.scan_lines` より多ければ自動で増やします (少ないと上のラインの点を捨てる手法があるため)。FAST-LIO2 / FAST-LIVO2 のライン別バッファは 128 本固定なので、イメージで 256 本に広げています
+- **視野**: ATX は前方 120〜140° だけを走査します。1 スキャンの長さがスキャン周期より短いので、時刻の付け直しは「スキャン同士の間隔」で LiDAR の時計の進み方を判定します (XT16 も同じ方法)
+- **取り付けの向き**: ATX はライン番号と上下の向きの関係を確かめていないので、天地逆の自動判定はしません。`T_imu_lidar` に傾き (下向きに付けた角度など) を入れてください
+- **記録量**: ATX の点群は XT16 の数倍〜十数倍あり、PointCloud2 のままでは Raspberry Pi の記録が追いつかないことがあります。drone_slam の `record_lidar_packets:=true` で UDP パケット (`/lidar_packets`) を記録できますが、パケットから点群を作り直す処理は bag2html ではまだ未対応です (パケットだけの bag は理由を表示して止めます)
+
 
 ```bash
 # 1 手法だけ / 全手法 (ROS2 bag は自動で ROS1 に変換。出力は ./output/<手法>_<日時>/)

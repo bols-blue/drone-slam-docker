@@ -166,7 +166,10 @@ def analyze_hesai(reader, conn, threshold_s):
     keep  : PTP 等で同期済み (ずれが小さく一定) -> そのまま
     offset: 一定のずれ (PTP 未設定で LiDAR 内蔵時計) -> 中央値で一律に補正
     record: ずれが時間とともに変わる (LiDAR の時計の進み方がずれている) -> 記録時刻から付け直し、
-            スキャン内の相対時刻もスキャン周期に合わせて伸縮する
+            スキャン内の相対時刻も時計の進み方に合わせて伸縮する
+
+    時計の進み方は、スキャン同士の間隔 (ヘッダ時刻の差と記録時刻の差) で比べる。1 スキャンの長さ (span) で比べると、
+    ATX のように 360° 回らない LiDAR では span がスキャン周期より短いので、時計がずれていると誤判定するため。
     """
     rows = []
     for _, logtime, raw in reader.messages(connections=[conn]):
@@ -182,24 +185,27 @@ def analyze_hesai(reader, conn, threshold_s):
     med = float(np.median(lag))
     spread = float(np.percentile(lag, 90) - np.percentile(lag, 10))
     period = float(np.median(np.diff(r[:, 0])))   # PC の時計で見たスキャン周期
-    span = float(np.median(r[:, 3] - r[:, 2]))    # LiDAR の時計で見たスキャン 1 回分
-    info = {"offset": med, "spread": spread, "period": period, "span": span, "scale": 1.0}
-    if spread > 0.05 or abs(span / period - 1.0) > 0.03:
-        scale = period / span if span > 0 else 1.0
+    period_lidar = float(np.median(np.diff(r[:, 1])))  # LiDAR の時計で見たスキャン周期
+    span = float(np.median(r[:, 3] - r[:, 2]))    # LiDAR の時計で見たスキャン 1 回分 (最初の点から最後の点まで)
+    info = {"offset": med, "spread": spread, "period": period, "period_lidar": period_lidar, "span": span, "scale": 1.0}
+    if spread > 0.05 or (period_lidar > 0 and abs(period / period_lidar - 1.0) > 0.03):
+        scale = period / period_lidar if period_lidar > 0 else 1.0
+        info["scan_pc"] = span * scale  # PC の時計で見たスキャン 1 回分
         # スキャン同士の間隔は LiDAR の時計の差 (進み方を補正) で決め、記録時刻には全体として合わせる。
         # 記録時刻をそのまま使うと、大きなメッセージがまとめて届いたときにスキャンの時刻が重なるため。
         # LiDAR の時刻が跳んだ (PTP の補正など) ところだけ記録時刻に合わせ直す。
         rec, t0 = r[:, 0], r[:, 2]
         starts = np.empty(len(r))
-        starts[0] = rec[0] - period
+        scan_pc = span * scale
+        starts[0] = rec[0] - scan_pc
         for k in range(1, len(r)):
             dh = (t0[k] - t0[k - 1]) * scale
             drec = rec[k] - rec[k - 1]
             if dh > 0 and abs(dh - drec) < 0.5:
                 starts[k] = starts[k - 1] + dh
             else:
-                starts[k] = rec[k] - period
-        starts += np.median(rec - period - starts)
+                starts[k] = rec[k] - scan_pc
+        starts += np.median(rec - scan_pc - starts)
         info.update(mode="record", scale=scale, starts=starts, idx=0)
     elif abs(med) > threshold_s:
         info.update(mode="offset")
@@ -221,8 +227,8 @@ def hesai_to_livox_ros1(msg, logtime_ns, info, frame_id=None):
             start = float(info["starts"][info["idx"]])
             info["idx"] += 1
         else:
-            # スキャンの最後の点を受信した時刻 ≒ 記録時刻 とみなし、先頭は 1 周期前
-            start = logtime_ns * 1e-9 - info["period"]
+            # スキャンの最後の点を受信した時刻 ≒ 記録時刻 とみなし、先頭はスキャン 1 回分前
+            start = logtime_ns * 1e-9 - info.get("scan_pc", info["period"])
     elif info["mode"] == "offset":
         start = t0 + info["offset"]
     else:
@@ -340,7 +346,8 @@ def main():
             hesai[c.id] = info
             print(f"[info] {c.topic} (Hesai) -> {c.topic}/livox: 時刻の扱い={info['mode']} "
                   f"(記録-ヘッダ 中央値 {info.get('offset', 0):+.3f} s, ばらつき {info.get('spread', 0):.3f} s, "
-                  f"スキャン周期 PC {info['period']:.4f} s / LiDAR {info.get('span', 0):.4f} s)")
+                  f"スキャン周期 PC {info['period']:.4f} s / LiDAR {info.get('period_lidar', 0):.4f} s, "
+                  f"1 スキャンの長さ {info.get('span', 0):.4f} s)")
             if info["mode"] == "record":
                 print("[info]   LiDAR の時計の進み方が PC とずれているため、記録時刻からスキャン時刻を付け直します "
                       "(PTP が Locked になっていない可能性。精度は受信遅延のばらつき程度)")
