@@ -160,16 +160,45 @@ def is_hesai(msg):
     return HESAI_FIELDS <= names and ts and ts[0].datatype == 8
 
 
+def _lower_hull_rate(x, y, min_span=5.0):
+    """点列 (x, y) の下側の支持直線の傾き dy/dx。
+
+    y (記録時刻) は遅れる向きにしかずれない (受信の詰まりやラズパイの処理の遅れが数十秒続くこともある) ので、
+    遅れずに届いた点が作る下側の凸包のうち、x の平均をまたぐ辺の傾きを使う (全点がその直線より上にあり、
+    直線との差の合計が最小になる)。x の幅が min_span 秒未満なら None
+    """
+    if len(x) < 5 or x[-1] - x[0] < min_span:
+        return None
+    hull = []
+    for p in zip(x.tolist(), y.tolist()):
+        while len(hull) >= 2:
+            (x1, y1), (x2, y2) = hull[-2], hull[-1]
+            if (x2 - x1) * (p[1] - y1) - (y2 - y1) * (p[0] - x1) <= 0:
+                hull.pop()
+            else:
+                break
+        hull.append(p)
+    xm = float(np.mean(x))
+    for (x1, y1), (x2, y2) in zip(hull[:-1], hull[1:]):
+        if x1 <= xm <= x2 and x2 > x1:
+            return (y2 - y1) / (x2 - x1)
+    return None
+
+
 def analyze_hesai(reader, conn, threshold_s):
     """点群のヘッダ時刻と記録時刻の関係から、時刻の付け直し方を決める。
 
     keep  : PTP 等で同期済み (ずれが小さく一定) -> そのまま
-    offset: 一定のずれ (PTP 未設定で LiDAR 内蔵時計) -> 中央値で一律に補正
-    record: ずれが時間とともに変わる (LiDAR の時計の進み方がずれている) -> 記録時刻から付け直し、
+    offset: 一定のずれ (PTP 未設定で LiDAR 内蔵時計) -> 一律に補正
+    record: LiDAR の時計の進み方がずれている、または時刻が跳ぶ (PTP の補正など) -> 区間ごとに記録時刻へ合わせ直し、
             スキャン内の相対時刻も時計の進み方に合わせて伸縮する
 
-    時計の進み方は、スキャン同士の間隔 (ヘッダ時刻の差と記録時刻の差) で比べる。1 スキャンの長さ (span) で比べると、
-    ATX のように 360° 回らない LiDAR では span がスキャン周期より短いので、時計がずれていると誤判定するため。
+    記録時刻は、点群がまとめて遅れて届く (受信の詰まり) と 1 秒以上遅れ、ラズパイの処理が追いつかないと
+    1〜2 秒の遅れが数十秒続くこともある (2026-10-20 の XT16、2026-10-29 の ATX)。遅れは記録時刻を後ろにずらすだけなので、
+    時計の進み方も記録時刻への合わせ込みも、いちばん早く届いたスキャン (下側の包絡線) に合わせる
+    (隣り合うスキャンの間隔の中央値や、ずれの中央値は、遅れた分だけ狂うので使えない)
+    LiDAR の時刻が跳んだところ (ヘッダ時刻が戻る、または 1 秒以上進む) で区間を分ける。
+    1 スキャンの長さ (span) は時計の判定に使わない (ATX のように 360° 回らない LiDAR では周期より短いため)。
     """
     rows = []
     for _, logtime, raw in reader.messages(connections=[conn]):
@@ -181,33 +210,59 @@ def analyze_hesai(reader, conn, threshold_s):
     if len(rows) < 3:
         return {"mode": "keep", "offset": 0.0, "scale": 1.0, "period": 0.1}
     r = np.array(rows)
-    lag = r[:, 0] - r[:, 1]                       # 記録時刻 - ヘッダ時刻
+    rec, hdr, t0 = r[:, 0], r[:, 1], r[:, 2]
+    lag = rec - hdr                                # 記録時刻 - ヘッダ時刻
     med = float(np.median(lag))
     spread = float(np.percentile(lag, 90) - np.percentile(lag, 10))
-    period = float(np.median(np.diff(r[:, 0])))   # PC の時計で見たスキャン周期
-    period_lidar = float(np.median(np.diff(r[:, 1])))  # LiDAR の時計で見たスキャン周期
+    period_lidar = float(np.median(np.diff(hdr)))  # LiDAR の時計で見たスキャン周期
     span = float(np.median(r[:, 3] - r[:, 2]))    # LiDAR の時計で見たスキャン 1 回分 (最初の点から最後の点まで)
-    info = {"offset": med, "spread": spread, "period": period, "period_lidar": period_lidar, "span": span, "scale": 1.0}
-    if spread > 0.05 or (period_lidar > 0 and abs(period / period_lidar - 1.0) > 0.03):
-        scale = period / period_lidar if period_lidar > 0 else 1.0
-        info["scan_pc"] = span * scale  # PC の時計で見たスキャン 1 回分
-        # スキャン同士の間隔は LiDAR の時計の差 (進み方を補正) で決め、記録時刻には全体として合わせる。
-        # 記録時刻をそのまま使うと、大きなメッセージがまとめて届いたときにスキャンの時刻が重なるため。
-        # LiDAR の時刻が跳んだ (PTP の補正など) ところだけ記録時刻に合わせ直す。
-        rec, t0 = r[:, 0], r[:, 2]
-        starts = np.empty(len(r))
-        scan_pc = span * scale
-        starts[0] = rec[0] - scan_pc
-        for k in range(1, len(r)):
-            dh = (t0[k] - t0[k - 1]) * scale
-            drec = rec[k] - rec[k - 1]
-            if dh > 0 and abs(dh - drec) < 0.5:
-                starts[k] = starts[k - 1] + dh
-            else:
-                starts[k] = rec[k] - scan_pc
-        starts += np.median(rec - scan_pc - starts)
-        info.update(mode="record", scale=scale, starts=starts, idx=0)
-    elif abs(med) > threshold_s:
+
+    def split(breaks):
+        return np.split(np.arange(len(r)), breaks)
+
+    def fit_scale(segs):
+        """時計の進み方 (PC の秒 / LiDAR の秒)。区間ごとに求め、スキャン数で重み付けした中央値"""
+        rates, weights = [], []
+        for sg in segs:
+            q = _lower_hull_rate(t0[sg], rec[sg])
+            if q is not None:
+                rates.append(q)
+                weights.append(len(sg))
+        if not rates:
+            # 区間が短すぎるときは、隣り合うスキャンの間隔の比 (受信の詰まりがあると不正確)
+            d_rec, d_t0 = float(np.median(np.diff(rec))), float(np.median(np.diff(t0)))
+            return d_rec / d_t0 if d_t0 > 0 else 1.0
+        order = np.argsort(rates)
+        cw = np.cumsum(np.array(weights)[order])
+        return float(np.array(rates)[order][np.searchsorted(cw, cw[-1] / 2)])
+
+    # LiDAR の時刻が跳んだところで区間を分ける。1 回目は大きな跳びだけで分けて時計の進み方を求め、
+    # 2 回目は「ヘッダ時刻が記録時刻より 0.4 秒以上多く進んだ (または戻った)」ところで分ける。
+    # 受信の詰まりは記録時刻の方が多く進む向きなので区切りにならず、欠けたスキャンは両方とも同じだけ進むので区切りにならない
+    dh = np.diff(t0)
+    drec = np.diff(rec)
+    scale = fit_scale(split(np.where((dh <= 0) | (dh > 1.0))[0] + 1))
+    segs = split(np.where((dh <= 0) | (dh * scale - drec > 0.4))[0] + 1)
+    scale = fit_scale(segs)
+    if abs(scale - 1.0) <= 0.003:  # 0.3% 以内は同じ進み方とみなす (推定の誤差)
+        scale = 1.0
+    period = period_lidar * scale                  # PC の時計で見たスキャン周期
+    scan_pc = span * scale                         # PC の時計で見たスキャン 1 回分
+    # 区間ごとに、いちばん早く届いたスキャンに合わせる (スキャンの最後の点を受信した時刻 ≒ 記録時刻)。
+    # 記録時刻のわずかなばらつきで 1 点だけ早いことがあるので、最小値ではなく 1 パーセンタイル
+    starts = np.empty(len(r))
+    for sg in segs:
+        base = t0[sg] * scale
+        starts[sg] = base + np.percentile(rec[sg] - scan_pc - base, 1)
+    late = rec - scan_pc - starts                  # 記録時刻の遅れ (受信の詰まり)
+    info = {"offset": med, "spread": spread, "period": period, "period_lidar": period_lidar, "span": span,
+            "scale": scale, "scan_pc": scan_pc, "segments": len(segs),
+            "late_p95": float(np.percentile(late, 95)), "late_max": float(late.max()),
+            # 一律に補正するときのずれ。いちばん早く届いたスキャンに合わせる (中央値だと、遅れた分だけずれる)
+            "offset_fit": float(np.percentile(rec - scan_pc - t0, 1))}
+    if len(segs) > 1 or scale != 1.0:
+        info.update(mode="record", starts=starts, idx=0)
+    elif spread > 0.05 or abs(med) > threshold_s:
         info.update(mode="offset")
     else:
         info.update(mode="keep")
@@ -230,7 +285,7 @@ def hesai_to_livox_ros1(msg, logtime_ns, info, frame_id=None):
             # スキャンの最後の点を受信した時刻 ≒ 記録時刻 とみなし、先頭はスキャン 1 回分前
             start = logtime_ns * 1e-9 - info.get("scan_pc", info["period"])
     elif info["mode"] == "offset":
-        start = t0 + info["offset"]
+        start = t0 + info.get("offset_fit", info["offset"])
     else:
         start = t0
     order = np.argsort(rel, kind="stable")
@@ -345,12 +400,14 @@ def main():
                     info["scale"] = 1.0
             hesai[c.id] = info
             print(f"[info] {c.topic} (Hesai) -> {c.topic}/livox: 時刻の扱い={info['mode']} "
-                  f"(記録-ヘッダ 中央値 {info.get('offset', 0):+.3f} s, ばらつき {info.get('spread', 0):.3f} s, "
+                  f"(記録-ヘッダ {info.get('offset', 0):+.3f} s, ばらつき {info.get('spread', 0):.3f} s, "
+                  f"時計の進み方 x{info['scale']:.4f}, 区間 {info.get('segments', 1)}, "
+                  f"受信の遅れ 95% {info.get('late_p95', 0):.3f} s / 最大 {info.get('late_max', 0):.3f} s, "
                   f"スキャン周期 PC {info['period']:.4f} s / LiDAR {info.get('period_lidar', 0):.4f} s, "
                   f"1 スキャンの長さ {info.get('span', 0):.4f} s)")
             if info["mode"] == "record":
-                print("[info]   LiDAR の時計の進み方が PC とずれているため、記録時刻からスキャン時刻を付け直します "
-                      "(PTP が Locked になっていない可能性。精度は受信遅延のばらつき程度)")
+                print("[info]   LiDAR の時計の進み方が PC とずれているか時刻が跳んでいるため、区間ごとに記録時刻へ合わせ直します "
+                      "(PTP が Locked になっていない可能性)")
 
         # --- IMU の |加速度| の中央値 (外れ値除去と単位判定に使う) ---
         imu_med = {c.id: imu_norm_median(reader, c) for c in conns if c.msgtype == "sensor_msgs/msg/Imu"}
